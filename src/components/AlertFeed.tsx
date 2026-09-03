@@ -67,9 +67,12 @@ export const AlertFeed: React.FC<AlertFeedProps> = ({
         return;
       }
 
-      const key = `${d.latitude.toFixed(3)}_${d.longitude.toFixed(3)}_${d.disaster_type}`;
-      if (seen.has(key)) return;
-      seen.add(key);
+      const dType = (d.disaster_type || '').toUpperCase();
+      const spatialKey = `${dType}_${Math.round(d.latitude * 8) / 8}_${Math.round(d.longitude * 8) / 8}`;
+      const nameKey = `${dType}_${(d.place || d.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 14)}`;
+      if (seen.has(spatialKey) || seen.has(nameKey)) return;
+      seen.add(spatialKey);
+      seen.add(nameKey);
 
       let distanceKm: number | null = null;
       if (userLocation) {
@@ -101,9 +104,12 @@ export const AlertFeed: React.FC<AlertFeedProps> = ({
 
     // 2. Secondary fallback: alerts
     alerts.forEach((a) => {
-      const key = `${a.location.latitude.toFixed(3)}_${a.location.longitude.toFixed(3)}_${a.disaster_type}`;
-      if (seen.has(key)) return;
-      seen.add(key);
+      const dType = (a.disaster_type || '').toUpperCase();
+      const spatialKey = `${dType}_${Math.round(a.location.latitude * 8) / 8}_${Math.round(a.location.longitude * 8) / 8}`;
+      const nameKey = `${dType}_${(a.location.location_name || a.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 14)}`;
+      if (seen.has(spatialKey) || seen.has(nameKey)) return;
+      seen.add(spatialKey);
+      seen.add(nameKey);
 
       let distanceKm: number | null = null;
       if (userLocation) {
@@ -204,7 +210,7 @@ export const AlertFeed: React.FC<AlertFeedProps> = ({
         <div className="flex items-center space-x-1 overflow-x-auto no-scrollbar pb-1">
           {[
             { id: 'ALL', label: `All (${unifiedItems.length})` },
-            { id: 'INDIA', label: '🇮🇳 India Watch' },
+            { id: 'INDIA', label: 'India Watch' },
             { id: 'QUAKE', label: 'Quakes' },
             { id: 'FLOOD', label: 'Floods' },
             { id: 'CYCLONE', label: 'Cyclones' },
@@ -252,7 +258,7 @@ export const AlertFeed: React.FC<AlertFeedProps> = ({
                     </div>
                     {isIndiaItem && (
                       <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                        🇮🇳 INDIA
+                        INDIA
                       </span>
                     )}
                     <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-700">

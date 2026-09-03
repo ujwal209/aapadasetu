@@ -3,7 +3,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { 
   MapPin, 
-  Navigation, 
   ShieldAlert, 
   CloudRain, 
   Sun, 
@@ -16,6 +15,7 @@ import {
   Thermometer, 
   Share2, 
   ExternalLink,
+  ChevronLeft,
   ChevronRight,
   CheckCircle2,
   AlertTriangle,
@@ -36,7 +36,18 @@ interface GoogleMapsPlaceViewProps {
   resolvedLocation?: string;
   lat: number;
   lon: number;
+  userLocation?: { lat: number; lon: number } | null;
   onFlyTo: (lat: number, lon: number, zoom?: number) => void;
+  onNavigate?: (route: {
+    lat: number;
+    lon: number;
+    name: string;
+    distanceKm: number;
+    durationMin: number;
+    coordinates: [number, number][];
+    steps?: any[];
+  }) => void;
+  onClearRoute?: () => void;
   onTriggerSos?: () => void;
   nearbyDisasters?: LiveDisaster[];
   photos?: string[];
@@ -50,7 +61,10 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
   resolvedLocation,
   lat,
   lon,
+  userLocation,
   onFlyTo,
+  onNavigate,
+  onClearRoute,
   onTriggerSos,
   nearbyDisasters = [],
   photos = [],
@@ -63,16 +77,17 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
   const [activePhotoIdx, setActivePhotoIdx] = useState<number>(0);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
-  // 1. Fetch live weather & 6-day history from Open-Meteo + Wikipedia Place Summary & Photo
+  // 1. Fetch live weather & 6-day history from Open-Meteo + Parent City Landmark Photography & Summary
   useEffect(() => {
     let isCancelled = false;
     setIsLoading(true);
+    setActivePhotoIdx(0);
 
-    const queryName = parentCity || placeName || 'Sector';
+    const queryCity = parentCity || placeName || 'City';
 
     Promise.all([
       api.getPlaceWeatherAndHistory(lat, lon),
-      api.getPlaceWikiSummaryAndPhoto(queryName)
+      api.getPlaceWikiSummaryAndPhoto(queryCity, resolvedLocation, parentCity)
     ]).then(([w, wiki]) => {
       if (!isCancelled) {
         if (w) setWeatherData(w);
@@ -86,37 +101,87 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [lat, lon, parentCity, placeName]);
+  }, [lat, lon, parentCity, placeName, resolvedLocation]);
 
-  // Aggregate Photos: Combine Wikipedia photo with Tavily / user photos
+  // Aggregate Photos: Combine authentic Wikipedia and parent city landmark photos, strictly excluding disaster/flood images
   const allPhotos = useMemo(() => {
     const list: string[] = [];
-    if (wikiData?.photoUrl) list.push(wikiData.photoUrl);
-    if (photos && photos.length > 0) {
-      photos.forEach((p) => {
-        if (p && !list.includes(p)) list.push(p);
+
+    if (wikiData?.photoUrl && !/(flood|disaster|debris|inundat|damage|casualt|submerged|wreck)/i.test(wikiData.photoUrl)) {
+      list.push(wikiData.photoUrl);
+    }
+    if ((wikiData as any)?.photoUrls) {
+      (wikiData as any).photoUrls.forEach((p: string) => {
+        if (p && !/(flood|disaster|debris|inundat|damage|casualt|submerged|wreck)/i.test(p) && !list.includes(p)) {
+          list.push(p);
+        }
       });
     }
+    if (photos && photos.length > 0) {
+      photos.forEach((p) => {
+        if (p && !/(flood|disaster|debris|inundat|damage|casualt|submerged|wreck)/i.test(p) && !list.includes(p)) {
+          list.push(p);
+        }
+      });
+    }
+
     return list;
   }, [wikiData, photos]);
 
-  // Filter Nearby Disasters (within 120km)
+  // Filter genuine nearby disasters within 100km radius using Haversine formula
   const localHazards = useMemo(() => {
     if (!nearbyDisasters || nearbyDisasters.length === 0) return [];
-    return nearbyDisasters.slice(0, 3);
-  }, [nearbyDisasters]);
 
-  // Helper for Weather Code to Human Text & Icon
+    const computed = nearbyDisasters.map((d) => {
+      // 1. Distance from inspected place coordinates (lat, lon)
+      const dLat1 = ((d.latitude - lat) * Math.PI) / 180;
+      const dLon1 = ((d.longitude - lon) * Math.PI) / 180;
+      const a1 =
+        Math.sin(dLat1 / 2) * Math.sin(dLat1 / 2) +
+        Math.cos((lat * Math.PI) / 180) *
+          Math.cos((d.latitude * Math.PI) / 180) *
+          Math.sin(dLon1 / 2) *
+          Math.sin(dLon1 / 2);
+      const distFromPlaceKm = Math.round(6371 * 2 * Math.atan2(Math.sqrt(a1), Math.sqrt(1 - a1)));
+
+      // 2. Distance from current user GPS coordinates (if available)
+      let distFromUserKm: number | null = null;
+      if (userLocation) {
+        const dLat2 = ((d.latitude - userLocation.lat) * Math.PI) / 180;
+        const dLon2 = ((d.longitude - userLocation.lon) * Math.PI) / 180;
+        const a2 =
+          Math.sin(dLat2 / 2) * Math.sin(dLat2 / 2) +
+          Math.cos((userLocation.lat * Math.PI) / 180) *
+            Math.cos((d.latitude * Math.PI) / 180) *
+            Math.sin(dLon2 / 2) *
+            Math.sin(dLon2 / 2);
+        distFromUserKm = Math.round(6371 * 2 * Math.atan2(Math.sqrt(a2), Math.sqrt(1 - a2)));
+      }
+
+      return {
+        ...d,
+        distFromPlaceKm,
+        distFromUserKm,
+      };
+    });
+
+    // Strictly filter genuine hazards situated within 100 km radius of this place (no hardcoded/distant alerts)
+    const withinPerimeter = computed.filter((d) => d.distFromPlaceKm <= 100);
+    withinPerimeter.sort((a, b) => a.distFromPlaceKm - b.distFromPlaceKm);
+    return withinPerimeter.slice(0, 4);
+  }, [nearbyDisasters, lat, lon, userLocation]);
+
+  // Helper for Weather Code to Human Text & Icon (Strict Black & White)
   const weatherMeta = useMemo(() => {
     const code = weatherData?.current?.weather_code ?? 1;
-    if (code === 0) return { label: 'Clear Sky', icon: Sun, color: 'text-amber-500' };
-    if (code <= 3) return { label: 'Partly Cloudy', icon: CloudSun, color: 'text-blue-400' };
-    if (code <= 48) return { label: 'Foggy / Misty', icon: Cloud, color: 'text-neutral-400' };
-    if (code <= 55) return { label: 'Light Drizzle', icon: CloudDrizzle, color: 'text-cyan-400' };
-    if (code <= 65) return { label: 'Rain Showers', icon: CloudRain, color: 'text-blue-500' };
-    if (code <= 82) return { label: 'Heavy Rain', icon: CloudRain, color: 'text-blue-600' };
-    if (code >= 95) return { label: 'Thunderstorm', icon: CloudLightning, color: 'text-amber-600' };
-    return { label: 'Fair Weather', icon: Sun, color: 'text-amber-500' };
+    if (code === 0) return { label: 'Clear Sky', icon: Sun, color: 'text-neutral-800 dark:text-neutral-200' };
+    if (code <= 3) return { label: 'Partly Cloudy', icon: CloudSun, color: 'text-neutral-800 dark:text-neutral-200' };
+    if (code <= 48) return { label: 'Foggy / Misty', icon: Cloud, color: 'text-neutral-500 dark:text-neutral-400' };
+    if (code <= 55) return { label: 'Light Drizzle', icon: CloudDrizzle, color: 'text-neutral-700 dark:text-neutral-300' };
+    if (code <= 65) return { label: 'Rain Showers', icon: CloudRain, color: 'text-neutral-800 dark:text-neutral-200' };
+    if (code <= 82) return { label: 'Heavy Rain', icon: CloudRain, color: 'text-neutral-900 dark:text-neutral-100' };
+    if (code >= 95) return { label: 'Thunderstorm', icon: CloudLightning, color: 'text-neutral-900 dark:text-neutral-100' };
+    return { label: 'Fair Weather', icon: Sun, color: 'text-neutral-800 dark:text-neutral-200' };
   }, [weatherData]);
 
   // Parse 7-day temperature time series
@@ -189,13 +254,18 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
     return { width, height, pad, maxPoints, curvePath, areaPath, minVal, maxVal };
   }, [dailySeries]);
 
-  const handleShare = () => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(`${window.location.origin}/?lat=${lat}&lon=${lon}`);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
-    }
-  };
+  const distanceFromUserKm = useMemo(() => {
+    if (!userLocation) return null;
+    const dLat = ((lat - userLocation.lat) * Math.PI) / 180;
+    const dLon = ((lon - userLocation.lon) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((userLocation.lat * Math.PI) / 180) *
+        Math.cos((lat * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    return Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }, [userLocation, lat, lon]);
 
   const WeatherIcon = weatherMeta.icon;
   const currentTemp = weatherData?.current?.temperature_2m !== undefined 
@@ -213,17 +283,28 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
     ? Math.round(weatherData.current.relative_humidity_2m)
     : 60;
 
+  const handleNextPhoto = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (allPhotos.length <= 1) return;
+    setActivePhotoIdx((prev) => (prev + 1) % allPhotos.length);
+  };
+
+  const handlePrevPhoto = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (allPhotos.length <= 1) return;
+    setActivePhotoIdx((prev) => (prev - 1 + allPhotos.length) % allPhotos.length);
+  };
+
   return (
     <div className="space-y-4 text-neutral-900 dark:text-neutral-100 select-text">
-      {/* 1. HERO PHOTO CAROUSEL (Google Maps Style) */}
-      <div className="relative w-full h-44 sm:h-48 rounded-2xl overflow-hidden bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-sm">
+      {/* 1. HERO PHOTO CAROUSEL (Working Image Slider with Arrows & Dots) */}
+      <div className="relative w-full h-44 sm:h-52 rounded-2xl overflow-hidden bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-sm group">
         {allPhotos.length > 0 ? (
           <img
             src={allPhotos[activePhotoIdx] || allPhotos[0]}
             alt={placeName}
-            className="w-full h-full object-cover transition-opacity duration-300"
+            className="w-full h-full object-cover transition-opacity duration-300 select-none"
             onError={(e) => {
-              // Fallback scenic placeholder if image fails to load
               (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=60';
             }}
           />
@@ -236,74 +317,80 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
           </div>
         )}
 
-        {/* Gradient Overlay & Place Name Badge */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none" />
+        {/* Previous & Next Arrow Buttons for Image Slider */}
+        {allPhotos.length > 1 && (
+          <>
+            <button
+              onClick={handlePrevPhoto}
+              aria-label="Previous photo"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 z-30 w-7 h-7 rounded-full bg-black/65 hover:bg-black/90 text-white flex items-center justify-center backdrop-blur-xs transition border border-white/20 cursor-pointer shadow-md hover:scale-110 active:scale-95"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleNextPhoto}
+              aria-label="Next photo"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 z-30 w-7 h-7 rounded-full bg-black/65 hover:bg-black/90 text-white flex items-center justify-center backdrop-blur-xs transition border border-white/20 cursor-pointer shadow-md hover:scale-110 active:scale-95"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </>
+        )}
 
-        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between pointer-events-none">
-          <div className="text-white space-y-0.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/30 inline-block">
-              Target Location
-            </span>
-            <h2 className="text-lg font-extrabold tracking-tight drop-shadow-sm truncate max-w-[240px]">
+        {/* Gradient Overlay & Place Name Badge (No Target Location Tag) */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent pointer-events-none" />
+
+        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between pointer-events-none z-20">
+          <div className="text-white space-y-0.5 min-w-0 pr-2">
+            <h2 className="text-lg font-extrabold tracking-tight drop-shadow-sm truncate max-w-[260px]">
               {parentCity || placeName}
             </h2>
-            <p className="text-[11px] text-neutral-200 truncate flex items-center space-x-1">
-              <span>📍 {resolvedLocation || locality || placeName}</span>
-            </p>
+            <div className="text-[11px] text-neutral-200 truncate flex items-center space-x-1">
+              <MapPin className="w-3 h-3 text-neutral-300 flex-shrink-0" />
+              <span className="truncate">{resolvedLocation || locality || placeName}</span>
+            </div>
           </div>
 
           {allPhotos.length > 1 && (
-            <div className="pointer-events-auto flex items-center space-x-1 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/20 text-[10px] text-white">
-              {allPhotos.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setActivePhotoIdx(i)}
-                  className={`w-1.5 h-1.5 rounded-full transition ${activePhotoIdx === i ? 'bg-white scale-125' : 'bg-white/40'}`}
-                />
-              ))}
+            <div className="pointer-events-auto flex items-center space-x-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[10px] text-white flex-shrink-0">
+              <span className="font-mono text-[9px] font-bold text-neutral-300">
+                {activePhotoIdx + 1} / {allPhotos.length}
+              </span>
+              <div className="flex items-center space-x-1">
+                {allPhotos.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActivePhotoIdx(i);
+                    }}
+                    className={`w-2 h-2 rounded-full transition-all cursor-pointer ${
+                      activePhotoIdx === i ? 'bg-white scale-110 shadow-xs' : 'bg-white/40 hover:bg-white/75'
+                    }`}
+                    title={`View photo ${i + 1}`}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* 2. GOOGLE MAPS ACTION BAR */}
-      <div className="grid grid-cols-3 gap-2">
-        <button
-          onClick={() => onFlyTo(lat, lon, 14)}
-          className="flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl bg-black text-white dark:bg-white dark:text-black font-semibold text-xs shadow-xs hover:opacity-90 transition cursor-pointer"
-        >
-          <Navigation className="w-3.5 h-3.5" />
-          <span>Fly Here</span>
-        </button>
-
-        <button
-          onClick={onTriggerSos}
-          className="flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 font-semibold text-xs hover:bg-red-500/20 transition cursor-pointer"
-        >
-          <AlertTriangle className="w-3.5 h-3.5" />
-          <span>Distress SOS</span>
-        </button>
-
-        <button
-          onClick={handleShare}
-          className="flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-800 dark:text-neutral-200 font-semibold text-xs hover:bg-neutral-200 dark:hover:bg-neutral-800 transition cursor-pointer"
-        >
-          <Share2 className="w-3.5 h-3.5" />
-          <span>{copiedLink ? 'Copied!' : 'Share'}</span>
-        </button>
-      </div>
-
-      {/* 3. CURRENT WEATHER & CHANCE OF RAIN CARD (Plain Language) */}
+      {/* 2. CURRENT WEATHER & CHANCE OF RAIN CARD (Monochrome Black & White) */}
       <div className="p-3.5 sm:p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className={`p-2.5 rounded-xl bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 shadow-xs ${weatherMeta.color}`}>
-              <WeatherIcon className="w-6 h-6" />
+            <div className="p-2.5 rounded-xl bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 shadow-xs">
+              <WeatherIcon className={`w-6 h-6 ${weatherMeta.color}`} />
             </div>
             <div>
               <div className="flex items-baseline space-x-1.5">
-                <span className="text-2xl sm:text-3xl font-black tracking-tight">{currentTemp}°C</span>
-                <span className="text-xs text-neutral-500">Feels like {feelsLike}°C</span>
+                <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-neutral-900 dark:text-white">
+                  {currentTemp}°C
+                </span>
+                <span className="text-xs text-neutral-500 font-medium">
+                  Feels like {feelsLike}°C
+                </span>
               </div>
               <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
                 {weatherMeta.label}
@@ -313,7 +400,7 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
 
           {/* Chance of Rain Badge */}
           <div className="flex flex-col items-end">
-            <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-bold">
+            <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-neutral-100 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 text-xs font-bold">
               <CloudRain className="w-3.5 h-3.5" />
               <span>{todayRainProb}% Rain</span>
             </div>
@@ -331,7 +418,7 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
           </div>
           <div className="w-full h-2 bg-neutral-200 dark:bg-neutral-800 rounded-full overflow-hidden">
             <div 
-              className="h-full bg-blue-500 rounded-full transition-all duration-500" 
+              className="h-full bg-black dark:bg-white rounded-full transition-all duration-500" 
               style={{ width: `${Math.min(100, Math.max(5, todayRainProb))}%` }} 
             />
           </div>
@@ -344,7 +431,7 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
             <span>Wind: <strong className="text-neutral-900 dark:text-white">{windSpeed} km/h</strong></span>
           </div>
           <div className="flex items-center space-x-2 text-neutral-600 dark:text-neutral-400">
-            <Droplets className="w-3.5 h-3.5 text-blue-500" />
+            <Droplets className="w-3.5 h-3.5 text-neutral-500" />
             <span>Humidity: <strong className="text-neutral-900 dark:text-white">{humidity}%</strong></span>
           </div>
         </div>
@@ -485,7 +572,7 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
             {localHazards.map((h, hIdx) => (
               <div 
                 key={hIdx}
-                className="p-3 rounded-xl bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 space-y-1 hover:border-neutral-400 transition"
+                className="p-3 rounded-xl bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 space-y-1.5 hover:border-neutral-400 transition"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1.5">
@@ -494,18 +581,31 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
                       {h.disaster_type} Alert
                     </span>
                   </div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
-                    {h.severity || 'WARNING'}
-                  </span>
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800">
+                      {h.distFromPlaceKm} km away
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
+                      {h.severity || 'WARNING'}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-xs text-neutral-700 dark:text-neutral-300 font-medium">
                   {h.title}
                 </p>
-                <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-0.5">
-                  <span>📍 {h.place}</span>
+                <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-0.5 border-t border-neutral-100 dark:border-neutral-900">
+                  <div className="flex items-center space-x-1.5 truncate max-w-[260px]">
+                    <MapPin className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                    <span className="truncate">{h.place}</span>
+                    {h.distFromUserKm !== null && (
+                      <span className="text-neutral-400 font-mono flex-shrink-0">
+                        ({h.distFromUserKm} km from you)
+                      </span>
+                    )}
+                  </div>
                   <button 
                     onClick={() => onFlyTo(h.latitude, h.longitude, 12)}
-                    className="text-neutral-900 dark:text-white font-semibold hover:underline flex items-center space-x-0.5"
+                    className="text-neutral-900 dark:text-white font-semibold hover:underline flex items-center space-x-0.5 flex-shrink-0 ml-2 cursor-pointer"
                   >
                     <span>View on Map</span>
                     <ChevronRight className="w-2.5 h-2.5" />
@@ -515,9 +615,9 @@ export const GoogleMapsPlaceView: React.FC<GoogleMapsPlaceViewProps> = ({
             ))}
           </div>
         ) : (
-          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center space-x-2.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+          <div className="p-3 rounded-xl bg-neutral-100 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 flex items-center space-x-2.5">
+            <CheckCircle2 className="w-4 h-4 text-neutral-700 dark:text-neutral-300 flex-shrink-0" />
+            <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
               No active disaster alerts, river floods, or severe weather warnings reported within 100 km of this location.
             </p>
           </div>

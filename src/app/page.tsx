@@ -12,8 +12,8 @@ import { StatsBar } from '../components/StatsBar';
 import { AlertFeed } from '../components/AlertFeed';
 import { ShelterFinder } from '../components/ShelterFinder';
 import { LogisticsHub } from '../components/LogisticsHub';
-import { EmergencyDirectory } from '../components/EmergencyDirectory';
-import { api } from '../lib/api';
+import { OperationalRegionsTab } from '../components/OperationalRegionsTab';
+import { api, INITIAL_BASELINE_DISASTERS } from '../lib/api';
 import { 
   DisasterAlert, 
   ReliefShelter, 
@@ -37,15 +37,18 @@ import {
   MessageSquare,
   FileText,
   ChevronLeft,
+  ChevronDown,
   Radar,
   CheckCircle2,
   Phone,
   Sun,
   Moon,
-  Loader2
+  Loader2,
+  Compass
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { INITIAL_STATS } from '../lib/mock-data';
+import { INDIA_DISASTER_ZONES, DisasterZone } from '../lib/india-zones';
 
 // Dynamically import 3D Globe with SSR disabled
 const GlobeViewer3D = dynamic(
@@ -66,7 +69,7 @@ const GlobeViewer3D = dynamic(
 export default function DisasterCommandPage() {
   const { theme, toggleTheme } = useTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'intel' | 'assistant' | 'telemetry' | 'alerts' | 'shelters' | 'sos' | 'resources'>('alerts');
+  const [activeTab, setActiveTab] = useState<'regions' | 'alerts' | 'intel' | 'telemetry' | 'assistant' | 'shelters' | 'sos' | 'resources'>('regions');
 
   // Inspected Item State
   const [inspectedItem, setInspectedItem] = useState<InspectItem | null>(null);
@@ -78,13 +81,87 @@ export default function DisasterCommandPage() {
   const [sosBeacons, setSosBeacons] = useState<DistressBeacon[]>([]);
   const [resources, setResources] = useState<ResourceStock[]>([]);
   const [liveEarthquakes, setLiveEarthquakes] = useState<LiveEarthquake[]>([]);
-  const [liveDisasters, setLiveDisasters] = useState<LiveDisaster[]>([]);
+  const [liveDisasters, setLiveDisasters] = useState<LiveDisaster[]>(INITIAL_BASELINE_DISASTERS);
+
+  // 5 Disaster Operational Zones State (Default: Northern Himalayas & Karakoram)
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>('ZONE-1-HIMALAYAN');
+  const [isScanningSector, setIsScanningSector] = useState<boolean>(false);
+  const selectedZone = useMemo(
+    () => INDIA_DISASTER_ZONES.find((z) => z.id === selectedZoneId) || null,
+    [selectedZoneId]
+  );
+
+  const handleSelectZone = async (zone: DisasterZone | null) => {
+    if (!zone) {
+      setSelectedZoneId(null);
+      setTargetCoords({
+        lat: 23.0,
+        lon: 80.5,
+        zoom: 4.4,
+        name: 'All India & Himalayas',
+      });
+      return;
+    }
+    if (selectedZoneId === zone.id) {
+      setSelectedZoneId(null);
+      setTargetCoords({
+        lat: 23.0,
+        lon: 80.5,
+        zoom: 4.4,
+        name: 'All India & Himalayas',
+      });
+      return;
+    }
+    setSelectedZoneId(zone.id);
+    setTargetCoords({
+      lat: zone.center[1],
+      lon: zone.center[0],
+      zoom: zone.zoom,
+      name: zone.name,
+    });
+
+    // Trigger on-demand sector-wise intelligence search
+    try {
+      setIsScanningSector(true);
+      const res = await fetch(`/api/geo/sector-intelligence?sector=${zone.id}`);
+      if (res.ok) {
+        const sectorDisasters = await res.json();
+        if (Array.isArray(sectorDisasters) && sectorDisasters.length > 0) {
+          setLiveDisasters((prev) => {
+            const combined = [...sectorDisasters, ...prev];
+            const deduped: any[] = [];
+            const seen = new Set<string>();
+            for (const d of combined) {
+              const dType = (d.disaster_type || '').toUpperCase();
+              const spatialKey = `${dType}-${Math.round(d.latitude * 8) / 8},${Math.round(d.longitude * 8) / 8}`;
+              const nameKey = `${dType}-${(d.place || d.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 14)}`;
+              if (!seen.has(spatialKey) && !seen.has(nameKey)) {
+                seen.add(spatialKey);
+                seen.add(nameKey);
+                deduped.push(d);
+              }
+            }
+            return deduped;
+          });
+        }
+      }
+    } catch {} finally {
+      setIsScanningSector(false);
+    }
+  };
 
   // User Geographic & Navigation States
   const [userLocation, setUserLocation] = useState<{ lat: number; lon: number; locality?: string; parentCity?: string } | null>(null);
-  const [targetCoords, setTargetCoords] = useState<{ lat: number; lon: number; zoom?: number; name?: string } | null>(null);
-  const [activeViewport, setActiveViewport] = useState<{ lat: number; lon: number; zoom: number } | null>(null);
+  const [targetCoords, setTargetCoords] = useState<{ lat: number; lon: number; zoom?: number; name?: string } | null>({
+    lat: 33.2,
+    lon: 77.2,
+    zoom: 5.2,
+    name: 'Northern Himalayas & Karakoram',
+  });
   const [isLocating, setIsLocating] = useState<boolean>(false);
+  const [activeViewport, setActiveViewport] = useState<{ lat: number; lon: number; zoom: number } | null>(null);
+  // Navigation Route State
+  const [activeRoute, setActiveRoute] = useState<any>(null);
 
   // 20km Sector Risk Telemetry Data
   const [localityRiskData, setLocalityRiskData] = useState<LocalityRiskData | null>(null);
@@ -186,8 +263,7 @@ export default function DisasterCommandPage() {
     api.getResources().then((data) => setResources(data));
     api.getStats().then((data) => setStats(data));
 
-    // Auto-detect user location on load and compute baseline multi-hazard risk
-    autoDetectLocation();
+    // Baseline multi-hazard risk assessment across India (no camera auto-zoom)
     fetch20kmRiskAssessment(20.5937, 78.9629);
   }, []);
 
@@ -205,14 +281,11 @@ export default function DisasterCommandPage() {
           const geo = await api.reverseGeocode(lat, lon);
           const parentCity = (geo as any).parent_city || geo.city || geo.district || geo.locality || 'User Locality';
           setUserLocation({ lat, lon, locality: geo.locality, parentCity });
-          setTargetCoords({ lat, lon, zoom: 11, name: parentCity });
-          setInspectedItem(null);
+          // Note: Do not force zoom camera to current location automatically; keep wide 5-zone view
           fetch20kmRiskAssessment(lat, lon);
         } catch (err) {
           console.error("Geocoding error:", err);
           setUserLocation({ lat, lon });
-          setTargetCoords({ lat, lon, zoom: 11, name: 'Active Sector' });
-          setInspectedItem(null);
           fetch20kmRiskAssessment(lat, lon);
         } finally {
           setIsLocating(false);
@@ -372,6 +445,60 @@ export default function DisasterCommandPage() {
     );
   };
 
+  // Determine if active location / selected sector is a High Risk Danger Zone
+  const isHighRiskZone = useMemo(() => {
+    // 1. Check localityRiskData
+    if (localityRiskData) {
+      if (localityRiskData.overallRiskScore >= 70) return true;
+      if (['CRITICAL', 'SEVERE', 'HIGH'].includes(localityRiskData.overallRiskLevel)) return true;
+    }
+    // 2. Check inspectedItem
+    if (inspectedItem?.type === 'DISASTER') {
+      const d = inspectedItem.data;
+      if (d.severity === 'CRITICAL' || d.severity === 'SEVERE' || (d.risk_score && d.risk_score >= 70)) return true;
+    }
+    if (inspectedItem?.type === 'QUAKE') {
+      const q = (inspectedItem as any).data;
+      if (q.magnitude >= 5.5 || q.severity === 'CRITICAL' || q.severity === 'SEVERE' || (q.risk_score && q.risk_score >= 70)) return true;
+    }
+    // 3. Check proximity to any critical disaster within 35 km
+    const activePos = targetCoords || userLocation;
+    if (activePos) {
+      const nearCriticalDisaster = liveDisasters.some((d) => {
+        const isCrit = d.severity === 'CRITICAL' || d.severity === 'SEVERE' || (d.risk_score && d.risk_score >= 70);
+        if (!isCrit) return false;
+        const dLat = ((Number(d.latitude) - activePos.lat) * Math.PI) / 180;
+        const dLon = ((Number(d.longitude) - activePos.lon) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((activePos.lat * Math.PI) / 180) *
+            Math.cos((Number(d.latitude) * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        const distKm = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return distKm <= 35;
+      });
+      if (nearCriticalDisaster) return true;
+
+      const nearCriticalQuake = liveEarthquakes.some((q) => {
+        const isCrit = q.magnitude >= 5.5 || q.severity === 'CRITICAL' || (q.risk_score && q.risk_score >= 70);
+        if (!isCrit) return false;
+        const dLat = ((Number(q.latitude) - activePos.lat) * Math.PI) / 180;
+        const dLon = ((Number(q.longitude) - activePos.lon) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((activePos.lat * Math.PI) / 180) *
+            Math.cos((Number(q.latitude) * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        const distKm = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return distKm <= (q.buffer_radius_km || 40);
+      });
+      if (nearCriticalQuake) return true;
+    }
+    return false;
+  }, [localityRiskData, inspectedItem, targetCoords, userLocation, liveDisasters, liveEarthquakes]);
+
   return (
     <div className="flex w-screen h-screen overflow-hidden bg-white dark:bg-black text-neutral-900 dark:text-neutral-100 select-text font-sans">
       {/* 1. SAAS SPLIT SIDEBAR: ALL TABS & FUNCTIONALITY EMBEDDED (NO FLOATING MODALS) */}
@@ -409,48 +536,34 @@ export default function DisasterCommandPage() {
                 AAPDA SETU
               </span>
 
-              {/* Prominent Colored Multi-Hazard Risk Indicator (Calculated strictly from AI analysis) */}
+              {/* Prominent Two-Tone Multi-Hazard Risk Indicator */}
               {localityRiskData ? (
                 (() => {
                   const score = localityRiskData.overallRiskScore;
                   const level = localityRiskData.overallRiskLevel;
                   const isCrit = level === 'CRITICAL';
-                  const isHigh = level === 'HIGH';
-                  const isMod = level === 'MODERATE';
                   
-                  const badgeStyle = isCrit
-                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/40 shadow-xs'
-                    : isHigh
-                    ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/40 shadow-xs'
-                    : isMod
-                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40 shadow-xs'
-                    : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40 shadow-xs';
-
-                  const dotColor = isCrit
-                    ? 'bg-rose-500'
-                    : isHigh
-                    ? 'bg-orange-500'
-                    : isMod
-                    ? 'bg-amber-500'
-                    : 'bg-emerald-500';
-
                   return (
                     <button
                       onClick={() => setActiveTab('telemetry')}
-                      className={`flex items-center space-x-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold border transition ml-1 cursor-pointer flex-shrink-0 ${badgeStyle}`}
-                      title="View dynamic AI multi-hazard risk assessment"
+                      className={`flex items-center space-x-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold border transition ml-1 cursor-pointer flex-shrink-0 ${
+                        isCrit
+                          ? 'bg-rose-500/15 text-rose-300 border-rose-500/40 shadow-xs'
+                          : 'bg-neutral-900 text-neutral-200 border-neutral-800'
+                      }`}
+                      title="View dynamic multi-hazard risk assessment"
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full ${dotColor} ${isCrit ? 'animate-ping' : ''}`}></span>
-                      <span className="opacity-70 text-[10px]">RISK</span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isCrit ? 'bg-rose-400 animate-ping' : 'bg-white'}`}></span>
+                      <span className="opacity-60 text-[10px]">RISK</span>
                       <span>{score}</span>
                       <span className="text-[9px] uppercase tracking-wider font-semibold">({level})</span>
                     </button>
                   );
                 })()
               ) : (
-                <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border border-neutral-200 dark:border-neutral-800 text-neutral-400 ml-1 flex-shrink-0">
+                <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border border-neutral-800 text-neutral-400 ml-1 flex-shrink-0">
                   <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse"></span>
-                  <span>RISK: AI ANALYZING...</span>
+                  <span>RISK: ANALYZING...</span>
                 </div>
               )}
             </div>
@@ -476,13 +589,61 @@ export default function DisasterCommandPage() {
             </div>
           </div>
 
-          {/* Quick Sub-Navigation Tabs */}
+          {/* Minimalist Operational Status Bar (Border color-coded to map when zone selected) */}
+          <div 
+            style={{ borderColor: selectedZone ? selectedZone.color : undefined }}
+            className={`px-3.5 py-2.5 bg-neutral-950 border-b flex items-center justify-between text-xs flex-shrink-0 transition-colors duration-200 ${
+              selectedZone ? '' : 'border-neutral-800'
+            }`}
+          >
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <span 
+                style={{ backgroundColor: selectedZone ? selectedZone.color : '#737373' }}
+                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" 
+              />
+              <div className="flex items-center space-x-2 min-w-0">
+                <span className="font-semibold text-white truncate">
+                  {selectedZone ? selectedZone.name : 'All Continental Sectors'}
+                </span>
+                {selectedZone && (
+                  <span 
+                    style={{ borderColor: selectedZone.color, color: selectedZone.color }}
+                    className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border shrink-0"
+                  >
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2 shrink-0 ml-2">
+              {isScanningSector && (
+                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-neutral-200 animate-pulse flex items-center space-x-1">
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                  <span>SCANNING...</span>
+                </span>
+              )}
+              <button
+                onClick={() => setActiveTab('regions')}
+                className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-md border transition cursor-pointer ${
+                  activeTab === 'regions'
+                    ? 'bg-white text-black border-white'
+                    : 'text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 border-neutral-800'
+                }`}
+              >
+                {activeTab === 'regions' ? 'Sectors Active' : 'Sectors Tab →'}
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Sub-Navigation Tabs (Strict Black & White Style) */}
           <nav className="flex items-center space-x-1 p-2 border-b border-neutral-200 dark:border-neutral-800 overflow-x-auto no-scrollbar bg-white dark:bg-black flex-shrink-0">
             {[
-              { id: 'intel', label: 'Briefing', icon: Shield },
-              { id: 'assistant', label: 'Assistant', icon: MessageSquare },
-              { id: 'telemetry', label: '20km Risk', icon: Radar },
+              { id: 'regions', label: 'Regions', icon: Compass },
               { id: 'alerts', label: 'Alerts', icon: AlertOctagon },
+              { id: 'intel', label: 'Briefing', icon: Shield },
+              { id: 'telemetry', label: '20km Risk', icon: Radar },
+              { id: 'assistant', label: 'Assistant', icon: MessageSquare },
               { id: 'shelters', label: 'Shelters', icon: Home },
               { id: 'sos', label: 'SOS', icon: Radio },
             ].map((tab) => {
@@ -492,9 +653,9 @@ export default function DisasterCommandPage() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-colors flex-shrink-0 ${
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-colors flex-shrink-0 cursor-pointer ${
                     isActive
-                      ? 'bg-black dark:bg-white text-white dark:text-black shadow-xs font-bold'
+                      ? 'bg-black dark:bg-white text-white dark:text-black font-bold shadow-xs'
                       : 'text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-900'
                   }`}
                 >
@@ -507,6 +668,16 @@ export default function DisasterCommandPage() {
 
           {/* Active Tab Content Panel */}
           <div className={`flex-1 min-h-0 ${activeTab === 'assistant' ? 'flex flex-col overflow-hidden p-0' : 'overflow-y-auto p-4 sm:p-5'}`}>
+            {/* 0. OPERATIONAL SECTORS: 5 Regional Disaster Management Commands */}
+            {activeTab === 'regions' && (
+              <OperationalRegionsTab
+                selectedZoneId={selectedZoneId}
+                onSelectZone={handleSelectZone}
+                disasters={liveDisasters}
+                isScanningSector={isScanningSector}
+              />
+            )}
+
             {/* 1. SECTOR DOSSIER: Real Tavily Images, Live Relief Camps, AI Overview, Timeline Wire */}
             <div className={activeTab === 'intel' ? 'block' : 'hidden'}>
               <SectorIntelDossier
@@ -518,8 +689,11 @@ export default function DisasterCommandPage() {
                   lat: activeCoordinates.lat,
                   lon: activeCoordinates.lon,
                 }}
+                userLocation={userLocation}
                 disasters={liveDisasters}
                 onFlyTo={(lat, lon, zoom = 14) => setTargetCoords({ lat, lon, zoom })}
+                onNavigate={(route) => setActiveRoute(route)}
+                onClearRoute={() => setActiveRoute(null)}
                 onTriggerSos={() => setActiveTab('sos')}
                 onRiskAssessmentUpdated={(data) => {
                   if (data) {
@@ -587,7 +761,7 @@ export default function DisasterCommandPage() {
                               <h4 className="text-xs font-bold text-neutral-900 dark:text-white">{irr.title}</h4>
                               <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
                                 irr.severity === 'CRITICAL' ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30' :
-                                irr.severity === 'WARNING' || irr.severity === 'HIGH' ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30' :
+                                irr.severity === 'WARNING' || (irr.severity as string) === 'HIGH' ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30' :
                                 'bg-neutral-100 dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800'
                               }`}>
                                 {irr.severity}
@@ -791,20 +965,28 @@ export default function DisasterCommandPage() {
           shelters={shelters}
           userLocation={userLocation}
           selectedCoordinates={targetCoords}
+          activeRoute={activeRoute}
+          onClearRoute={() => setActiveRoute(null)}
+          isHighRisk={isHighRiskZone}
           onInspectItem={handleInspectItem}
           onTriggerLocate={autoDetectLocation}
           onViewportChange={handleViewportChange}
           isLocating={isLocating}
-        />
-
-        {/* Top-Left Minimalist Search Bar & Filter Buttons */}
-        <SearchCard
-          onSelectPlace={handleSelectSearchPlace}
-          onToggleMenu={() => setIsSidebarOpen(!isSidebarOpen)}
-          onFilterClick={handleFilterClick}
-          onDetectLocation={autoDetectLocation}
-          isLocating={isLocating}
-        />
+          selectedZoneId={selectedZoneId}
+          onSelectZone={(id) => {
+            const z = INDIA_DISASTER_ZONES.find((x) => x.id === id) || null;
+            handleSelectZone(z);
+          }}
+        >
+          {/* Top-Left Minimalist Search Bar & Filter Buttons */}
+          <SearchCard
+            onSelectPlace={handleSelectSearchPlace}
+            onToggleMenu={() => setIsSidebarOpen(!isSidebarOpen)}
+            onFilterClick={handleFilterClick}
+            onDetectLocation={autoDetectLocation}
+            isLocating={isLocating}
+          />
+        </GlobeViewer3D>
 
         {/* Floating Command Operations Trigger (When sidebar collapsed) */}
         {!isSidebarOpen && (

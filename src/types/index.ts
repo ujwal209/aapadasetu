@@ -180,4 +180,5 @@ export interface LiveDisaster {
   buffer_radius_km: number;
   source: string;
   url?: string;
+  risk_score?: number;
 }

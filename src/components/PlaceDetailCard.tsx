@@ -45,9 +45,11 @@ export const PlaceDetailCard: React.FC<PlaceDetailCardProps> = ({
     title: string;
     url: string;
     snippet: string;
+    deep_text?: string;
     domain: string;
     source_name?: string;
     favicon: string;
+    image?: string | null;
     published_time?: string;
   }>>([]);
   const [aiOverview, setAiOverview] = useState<string | null>(null);

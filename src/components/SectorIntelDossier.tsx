@@ -4,7 +4,6 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { 
-  Navigation, 
   Shield, 
   ExternalLink, 
   Loader2, 
@@ -68,7 +67,10 @@ interface SectorIntelDossierProps {
     lat: number;
     lon: number;
   } | null;
+  userLocation?: { lat: number; lon: number; locality?: string } | null;
   onFlyTo: (lat: number, lon: number, zoom?: number) => void;
+  onNavigate?: (route: any) => void;
+  onClearRoute?: () => void;
   onTriggerSos: () => void;
   onClose?: () => void;
   onRiskAssessmentUpdated?: (data: any) => void;
@@ -78,7 +80,10 @@ interface SectorIntelDossierProps {
 export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
   item,
   currentSector,
+  userLocation,
   onFlyTo,
+  onNavigate,
+  onClearRoute,
   onTriggerSos,
   onClose,
   onRiskAssessmentUpdated,
@@ -191,6 +196,20 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
   const lastFetchedKeyRef = useRef<string>('');
   const onRiskUpdatedRef = useRef(onRiskAssessmentUpdated);
 
+  // Compute real-time distance from user's current GPS location
+  const distanceFromUserKm = useMemo(() => {
+    if (!userLocation) return null;
+    const dLat = ((lat - userLocation.lat) * Math.PI) / 180;
+    const dLon = ((lon - userLocation.lon) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((userLocation.lat * Math.PI) / 180) *
+        Math.cos((lat * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    return Math.round(6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }, [userLocation, lat, lon]);
+
   useEffect(() => {
     onRiskUpdatedRef.current = onRiskAssessmentUpdated;
   }, [onRiskAssessmentUpdated]);
@@ -255,10 +274,10 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
 
       // Risk score is calculated ONLY after AI analysis of verified dispatches and sensors
       let fetchedRisk = null;
-      if (intel && intel.risk_evidence) {
+      if (intel && (intel as any).risk_evidence) {
         fetchedRisk = {
-          overallRiskScore: intel.risk_evidence.score,
-          overallRiskLevel: intel.risk_evidence.level,
+          overallRiskScore: (intel as any).risk_evidence.score,
+          overallRiskLevel: (intel as any).risk_evidence.level,
         };
       } else if (intel && intel.articles && intel.articles.length > 0) {
         const combined = intel.articles.map(a => `${a.title} ${a.snippet}`).join(' ').toLowerCase();
@@ -352,7 +371,8 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
                     {item.data.title}
                   </h2>
                   <span className="text-[11px] text-neutral-600 dark:text-neutral-400 flex items-center space-x-1 mt-0.5">
-                    <span>📍 {resolvedLocation || item.data.place}</span>
+                    <MapPin className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                    <span>{resolvedLocation || item.data.place}</span>
                   </span>
                 </>
               ) : item?.type === 'QUAKE' ? (
@@ -364,22 +384,21 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
                     {item.data.place}
                   </h2>
                   {resolvedLocation && (
-                    <span className="text-[11px] text-neutral-500 block mt-0.5">
-                      📍 {resolvedLocation}
+                    <span className="text-[11px] text-neutral-500 flex items-center space-x-1 mt-0.5">
+                      <MapPin className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                      <span>{resolvedLocation}</span>
                     </span>
                   )}
                 </>
               ) : (
                 <>
-                  <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest block font-semibold">
-                    Target Location
-                  </span>
                   <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5">
                     {parentCity || "Sector Area"}
                   </h2>
                   {(resolvedLocation || (rawName && rawName !== parentCity)) && (
-                    <span className="text-[11px] text-neutral-500 block mt-0.5">
-                      📍 {resolvedLocation || rawName}
+                    <span className="text-[11px] text-neutral-500 flex items-center space-x-1 mt-0.5">
+                      <MapPin className="w-3 h-3 text-neutral-400 flex-shrink-0" />
+                      <span>{resolvedLocation || rawName}</span>
                     </span>
                   )}
                 </>
@@ -388,38 +407,24 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
           </div>
 
           <div className="flex items-center space-x-1.5 flex-shrink-0">
+            {distanceFromUserKm !== null && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-100 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-700">
+                {distanceFromUserKm} km away
+              </span>
+            )}
             <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-neutral-100 dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700">
               {distinctSourcesCount > 0 ? `${distinctSourcesCount} Feeds` : 'Live Telemetry'}
             </span>
           </div>
         </div>
-
-        {/* Action Controls (Strict Black/White) */}
-        <div className="flex items-center space-x-2 pt-0.5">
-          <button
-            onClick={() => onFlyTo(lat, lon, 14)}
-            className="flex-1 h-7 sm:h-8 px-2.5 rounded-md bg-black text-white dark:bg-white dark:text-black hover:opacity-90 font-medium text-xs transition flex items-center justify-center space-x-1.5 shadow-xs"
-          >
-            <Navigation className="w-3.5 h-3.5" strokeWidth={1.5} />
-            <span>Center Camera</span>
-          </button>
-
-          <button
-            onClick={onTriggerSos}
-            className="h-7 sm:h-8 px-2.5 rounded-md border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 font-medium text-xs transition flex items-center space-x-1.5"
-          >
-            <Shield className="w-3.5 h-3.5" strokeWidth={1.5} />
-            <span>Distress SOS</span>
-          </button>
-        </div>
       </div>
 
-      {/* 2. Enterprise Segmented Sub-Tab Bar (Google Maps Overview is FIRST TAB) */}
+      {/* 2. Enterprise Segmented Sub-Tab Bar (Briefing is strictly SECOND TAB) */}
       <div className="grid grid-cols-4 p-1 bg-neutral-100 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg gap-1 flex-shrink-0">
         {[
           { id: 'place', label: 'Overview', fullLabel: 'Place Photos, Weather & Temperature Graph', icon: MapPin },
-          { id: 'wire', label: 'News Wire', fullLabel: 'Live Verified News (Past 7 Days)', icon: Newspaper },
           { id: 'ai', label: 'Briefing', fullLabel: 'Situation Briefing', icon: FileText },
+          { id: 'wire', label: 'News Wire', fullLabel: 'Live Verified News (Past 7 Days)', icon: Newspaper },
           { id: 'relief', label: 'Shelters', fullLabel: 'Nearest Relief Camps & Safe Shelters', icon: Home },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -448,10 +453,13 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
           placeName={rawName}
           parentCity={parentCity}
           locality={locality}
-          resolvedLocation={resolvedLocation}
+          resolvedLocation={resolvedLocation || undefined}
           lat={lat}
           lon={lon}
+          userLocation={userLocation}
           onFlyTo={onFlyTo}
+          onNavigate={onNavigate}
+          onClearRoute={onClearRoute}
           onTriggerSos={onTriggerSos}
           nearbyDisasters={disasters}
           photos={images}
@@ -652,119 +660,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
         </div>
       )}
 
-      {/* 5. VIEW 3: RISK MATRIX (Score badge has critical severity colors) */}
-      {activeDossierTab === 'risk' && (
-        <SectorRiskScoreCard
-          score={riskAssessment?.overallRiskScore ?? 25}
-          level={riskAssessment?.overallRiskLevel ?? 'LOW'}
-          locationName={parentCity}
-          weather={liveSensors}
-          corroboratingSourcesCount={distinctSourcesCount}
-          hasFatalities={hasFatalities}
-          hasEvacuation={hasEvacuation}
-          nearestQuake={riskAssessment?.nearestQuake}
-        />
-      )}
-
-      {/* 6. VIEW 4: SURVEILLANCE & GROUND SENSORS */}
-      {activeDossierTab === 'radar' && (
-        <div className="space-y-3">
-          {/* Ground Sensors */}
-          {liveSensors && (
-            <div className="p-3 rounded-lg bg-neutral-50 dark:bg-black border border-neutral-200 dark:border-neutral-800 space-y-2">
-              <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-neutral-500">
-                <span>Atmospheric Sensors</span>
-                <span>Telemetry Grid</span>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded-md bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800">
-                  <span className="text-[10px] text-neutral-500 block">Temperature</span>
-                  <strong className="text-neutral-900 dark:text-white font-mono text-sm">{liveSensors.temperature_c ?? '--'}°C</strong>
-                </div>
-                <div className="p-2 rounded-md bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800">
-                  <span className="text-[10px] text-neutral-500 block">Wind Velocity</span>
-                  <strong className="text-neutral-900 dark:text-white font-mono text-sm">{liveSensors.wind_speed_kmh ?? '--'} km/h</strong>
-                </div>
-                <div className="p-2 rounded-md bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800">
-                  <span className="text-[10px] text-neutral-500 block">Precipitation</span>
-                  <strong className="text-neutral-900 dark:text-white font-mono text-sm">{liveSensors.precipitation_mm ?? '0.0'} mm</strong>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Surveillance Image or Tactical Radar */}
-          {images.length > 0 ? (
-            <div className="space-y-2">
-              <div className="h-44 sm:h-52 relative rounded-lg overflow-hidden bg-neutral-950 border border-neutral-200 dark:border-neutral-800">
-                <img
-                  src={images[selectedImgIdx] || images[0]}
-                  alt={parentCity}
-                  loading="lazy"
-                  decoding="async"
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-                <div className="absolute bottom-2.5 left-3 text-white pointer-events-none">
-                  <span className="text-[9px] font-mono text-neutral-300 block">Optical Record</span>
-                  <strong className="text-sm font-bold block">{parentCity}</strong>
-                </div>
-              </div>
-
-              {images.length > 1 && (
-                <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none">
-                  {images.slice(0, 5).map((img, iIdx) => (
-                    <button
-                      key={iIdx}
-                      onClick={() => setSelectedImgIdx(iIdx)}
-                      className={`w-12 h-9 rounded overflow-hidden flex-shrink-0 border transition ${
-                        selectedImgIdx === iIdx ? 'border-neutral-900 dark:border-white scale-105' : 'border-transparent opacity-60 hover:opacity-100'
-                      }`}
-                    >
-                      <img
-                        src={img}
-                        alt=""
-                        loading="lazy"
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            /* Tactical Radar Frame (Strict Black and White) */
-            <div className="h-40 rounded-lg bg-black border border-neutral-800 p-3 relative overflow-hidden flex flex-col justify-between text-white font-mono text-[10px]">
-              <div className="flex items-center justify-between text-neutral-300">
-                <span className="flex items-center space-x-1">
-                  <Radar className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
-                  <span>SECTOR SURVEILLANCE RADAR</span>
-                </span>
-                <span>AZIMUTH: {lon.toFixed(2)}°</span>
-              </div>
-
-              <div className="text-center space-y-0.5 my-auto">
-                <Crosshair className="w-5 h-5 text-neutral-300 mx-auto animate-pulse" strokeWidth={1.5} />
-                <span className="text-xs text-white font-bold block">GRID LOCK: {(parentCity || 'SECTOR').toUpperCase()}</span>
-                <span className="text-[9px] text-neutral-400 block">{lat.toFixed(4)}°N, {lon.toFixed(4)}°E</span>
-              </div>
-
-              <div className="flex items-center justify-between text-neutral-500 pt-1 border-t border-neutral-900">
-                <span>BEACON LOCKED</span>
-                <span>100% OPERATIONAL</span>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 7. VIEW 5: RELIEF & AID DIRECTORY (Real Tavily + Groq Lazy Loaded) */}
+      {/* 5. VIEW 4: RELIEF & AID DIRECTORY (Real Tavily + Groq Lazy Loaded) */}
       {activeDossierTab === 'relief' && (
         <div className="space-y-2.5">
           <div className="flex items-center justify-between pb-1 border-b border-neutral-200 dark:border-neutral-800 text-[11px]">

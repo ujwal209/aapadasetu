@@ -249,7 +249,7 @@ export const SearchCard: React.FC<SearchCardProps> = ({
   };
 
   return (
-    <div ref={containerRef} className="absolute top-4 left-4 sm:left-5 z-30 w-[calc(100%-2rem)] sm:w-[380px] lg:w-[420px] max-w-[calc(100%-2rem)] pointer-events-auto select-text space-y-2.5">
+    <div ref={containerRef} className="absolute top-4 left-4 sm:left-5 z-[450] w-[calc(100%-2rem)] sm:w-[380px] lg:w-[420px] max-w-[calc(100%-2rem)] pointer-events-auto select-text space-y-2.5">
       {/* Search Input Bar (Enterprise Geometry) */}
       <form
         onSubmit={(e) => {
@@ -368,56 +368,6 @@ export const SearchCard: React.FC<SearchCardProps> = ({
         </div>
       )}
 
-      {/* Pill Chips (Monochrome Theme with Red SOS Alert) */}
-      <div className="flex items-center space-x-2 overflow-x-auto py-1 no-scrollbar">
-        <button
-          onClick={onDetectLocation}
-          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 shadow-sm text-xs font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex-shrink-0"
-        >
-          <Crosshair className={`w-3.5 h-3.5 text-neutral-700 dark:text-neutral-300 ${isLocating ? 'animate-spin' : ''}`} />
-          <span>{isLocating ? 'Scanning Sector...' : 'My Locality (20km)'}</span>
-        </button>
-
-        <button
-          onClick={() => onFilterClick('india')}
-          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 shadow-sm text-xs font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex-shrink-0"
-        >
-          <span className="text-xs">🇮🇳</span>
-          <span>India Radar</span>
-        </button>
-
-        <button
-          onClick={() => onFilterClick('hazards')}
-          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 shadow-sm text-xs font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex-shrink-0"
-        >
-          <AlertCircle className="w-3.5 h-3.5 text-orange-500" />
-          <span>Hazards</span>
-        </button>
-
-        <button
-          onClick={() => onFilterClick('shelters')}
-          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 shadow-sm text-xs font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex-shrink-0"
-        >
-          <Shield className="w-3.5 h-3.5 text-neutral-700 dark:text-neutral-300" />
-          <span>Relief Camps</span>
-        </button>
-
-        <button
-          onClick={() => onFilterClick('cities')}
-          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 shadow-sm text-xs font-semibold text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex-shrink-0"
-        >
-          <Building className="w-3.5 h-3.5 text-neutral-700 dark:text-neutral-300" />
-          <span>Municipalities</span>
-        </button>
-
-        <button
-          onClick={() => onFilterClick('sos')}
-          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-md text-xs font-bold transition flex-shrink-0"
-        >
-          <Radio className="w-3.5 h-3.5" />
-          <span>SOS</span>
-        </button>
-      </div>
     </div>
   );
 };

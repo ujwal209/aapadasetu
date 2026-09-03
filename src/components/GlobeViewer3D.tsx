@@ -1,25 +1,31 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from 'react';
-import * as maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { 
-  Globe2, 
   Layers, 
-  MapPin, 
-  Compass, 
   Plus, 
   Minus, 
-  Crosshair,
-  Sliders,
-  ChevronUp,
-  ChevronDown,
-  X
+  Crosshair, 
+  X,
+  Compass,
+  Check
 } from 'lucide-react';
 import { LiveEarthquake, ReliefShelter, LiveDisaster } from '../types';
 import { api } from '../lib/api';
 import { InspectItem } from './PlaceDetailCard';
-import { REAL_CITIES } from '../data/real-cities';
+import { INDIA_DISASTER_ZONES, DisasterZone, getDisasterZoneForCoords } from '../lib/india-zones';
+
+export interface ActiveRouteData {
+  origin?: { lat: number; lon: number; name?: string };
+  destination?: { lat: number; lon: number; name: string };
+  lat?: number;
+  lon?: number;
+  name?: string;
+  distanceKm: number;
+  durationMin: number;
+  coordinates: [number, number][];
+  steps?: Array<{ instruction: string; distanceM: number; name?: string }>;
+}
 
 interface GlobeViewer3DProps {
   earthquakes: LiveEarthquake[];
@@ -27,147 +33,392 @@ interface GlobeViewer3DProps {
   shelters?: ReliefShelter[];
   userLocation?: { lat: number; lon: number; locality?: string } | null;
   selectedCoordinates?: { lat: number; lon: number; zoom?: number; name?: string } | null;
+  activeRoute?: ActiveRouteData | null;
+  onClearRoute?: () => void;
+  isHighRisk?: boolean;
   onInspectItem: (item: InspectItem) => void;
   onTriggerLocate: () => void;
   onViewportChange?: (viewport: { lat: number; lon: number; zoom: number; bounds?: { north: number; south: number; east: number; west: number } }) => void;
   isLocating?: boolean;
+  selectedZoneId?: string | null;
+  onSelectZone?: (zoneId: string | null) => void;
+  children?: React.ReactNode;
 }
 
 export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
-  earthquakes,
+  earthquakes = [],
   disasters = [],
   shelters = [],
   userLocation,
   selectedCoordinates,
+  activeRoute,
+  onClearRoute,
+  isHighRisk = false,
   onInspectItem,
   onTriggerLocate,
   onViewportChange,
   isLocating,
+  selectedZoneId: propSelectedZoneId,
+  onSelectZone,
+  children,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  
-  const userMarkerRef = useRef<maplibregl.Marker | null>(null);
-  const searchMarkerRef = useRef<maplibregl.Marker | null>(null);
-  const shelterMarkersRef = useRef<maplibregl.Marker[]>([]);
-  const disasterMarkersRef = useRef<maplibregl.Marker[]>([]);
-  const cityMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const leafletMapRef = useRef<any>(null);
+  const currentTileLayerRef = useRef<any>(null);
+  const zoneLayersGroupRef = useRef<any>(null);
+  const disasterMarkersGroupRef = useRef<any>(null);
+  const shelterMarkersGroupRef = useRef<any>(null);
+  const routeLayerGroupRef = useRef<any>(null);
+  const userMarkerRef = useRef<any>(null);
+  const searchMarkerRef = useRef<any>(null);
 
-  // Camera State
-  const [currentPitch, setCurrentPitch] = useState<number>(0);
-  const [currentBearing, setCurrentBearing] = useState<number>(0);
-  const [showAngleSlider, setShowAngleSlider] = useState<boolean>(false);
-  const angleSliderRef = useRef<HTMLDivElement>(null);
-
-  // Close 3D angle slider on outside click
-  useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (angleSliderRef.current && !angleSliderRef.current.contains(e.target as Node)) {
-        setShowAngleSlider(false);
-      }
-    };
-    if (showAngleSlider) {
-      document.addEventListener('mousedown', handleOutsideClick);
-    }
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [showAngleSlider]);
-
-  // Layer State
-  const [basemap, setBasemap] = useState<'satellite' | 'osm' | 'dark'>('satellite');
-  const [terrainEnabled, setTerrainEnabled] = useState<boolean>(true);
-  const [showSheltersOnGlobe, setShowSheltersOnGlobe] = useState<boolean>(true);
+  // Basemap & Layer toggles
+  const [basemap, setBasemap] = useState<'satellite' | 'street' | 'dark'>('satellite');
+  const [showZoneBorders, setShowZoneBorders] = useState<boolean>(true);
+  const [showShelters, setShowShelters] = useState<boolean>(true);
   const [isLayerMenuOpen, setIsLayerMenuOpen] = useState<boolean>(false);
+  const [internalSelectedZoneId, setInternalSelectedZoneId] = useState<string | null>(null);
 
-  // Basemap style generator (100% free open-source tiles with seamless spherical labels)
-  const getStyleForBasemap = (type: 'satellite' | 'osm' | 'dark') => {
-    let rasterTile = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-    let attribution = 'ESRI World Imagery';
+  const effectiveZoneId = propSelectedZoneId !== undefined ? propSelectedZoneId : internalSelectedZoneId;
+  const selectedZone = INDIA_DISASTER_ZONES.find((z) => z.id === effectiveZoneId) || null;
 
-    if (type === 'osm') {
-      rasterTile = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-      attribution = 'OpenStreetMap Contributors';
-    } else if (type === 'dark') {
-      rasterTile = 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
-      attribution = 'CartoDB Dark Matter';
+  const handleSelectZone = useCallback((zone: DisasterZone | null) => {
+    if (onSelectZone) {
+      onSelectZone(zone ? zone.id : null);
+    } else {
+      setInternalSelectedZoneId(zone ? zone.id : null);
     }
-
-    const sources: any = {
-      'basemap-source': {
-        type: 'raster' as const,
-        tiles: [rasterTile],
-        tileSize: 256,
-        attribution,
-      },
-      'terrain-source': {
-        type: 'raster-dem' as const,
-        tiles: [
-          'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
-        ],
-        encoding: 'terrarium' as const,
-        tileSize: 256,
-        maxzoom: 14,
-      },
-    };
-
-    const layers: any[] = [
-      {
-        id: 'basemap-layer',
-        type: 'raster' as const,
-        source: 'basemap-source',
-      },
-    ];
-
-    // Seamlessly overlay real boundaries and authoritative city names directly on the 3D globe surface
-    if (type === 'satellite') {
-      sources['reference-labels-source'] = {
-        type: 'raster' as const,
-        tiles: [
-          'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-        ],
-        tileSize: 256,
-        attribution: 'ESRI Boundaries and Places',
-      };
-      layers.push({
-        id: 'reference-labels-layer',
-        type: 'raster' as const,
-        source: 'reference-labels-source',
-      });
+    if (leafletMapRef.current && zone) {
+      leafletMapRef.current.flyTo([zone.center[1], zone.center[0]], zone.zoom, { duration: 1.2 });
     }
+  }, [onSelectZone]);
 
-    return {
-      version: 8 as const,
-      sources,
-      layers,
-      terrain: terrainEnabled
-        ? {
-            source: 'terrain-source',
-            exaggeration: 1.5,
-          }
-        : undefined,
-    };
+  // Disaster styling helpers
+  const getDisasterColor = (type: string) => {
+    const t = (type || '').toUpperCase();
+    if (t.includes('LANDSLIDE')) {
+      return { hex: '#D97706', bg: '#D97706', ping: '#FBBF24', glow: 'rgba(217, 119, 6, 0.45)' };
+    }
+    return { hex: '#0284C7', bg: '#0284C7', ping: '#38BDF8', glow: 'rgba(2, 132, 199, 0.45)' };
   };
 
-  // 1. INITIALIZE NORMAL MAP (Edge-to-edge seamless view with 3D angle support)
+  const getDisasterSvg = (type: string) => {
+    const t = (type || '').toUpperCase();
+    if (t.includes('LANDSLIDE')) {
+      return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20L10 5l4 8 8 7H2z"/><circle cx="16" cy="11" r="1.5" fill="currentColor"/><circle cx="18" cy="15" r="1.2" fill="currentColor"/><circle cx="14" cy="16" r="1.5" fill="currentColor"/></svg>`;
+    }
+    return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 11c2.5-2 5-2 7.5 0s5 2 7.5 0 5-2 7 0"/><path d="M2 16c2.5-2 5-2 7.5 0s5 2 7.5 0 5-2 7 0"/><path d="M2 21c2.5-2 5-2 7.5 0s5 2 7.5 0 5-2 7 0"/><path d="M7 4l1 2M12 2l1 2M17 4l1 2"/></svg>`;
+  };
+
+  // Get Tile URL for basemap
+  const getTileConfig = (type: 'satellite' | 'street' | 'dark') => {
+    switch (type) {
+      case 'street':
+        return {
+          url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+          attribution: '&copy; Esri &mdash; World Street Map',
+          maxZoom: 19,
+        };
+      case 'dark':
+        return {
+          url: 'https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png',
+          attribution: '&copy; CartoDB Dark Matter',
+          maxZoom: 19,
+        };
+      case 'satellite':
+      default:
+        return {
+          url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          attribution: '&copy; Esri World Imagery',
+          maxZoom: 19,
+        };
+    }
+  };
+
+  // RENDER THE OPERATIONAL REGIONS (CLEAN REGIONAL COLOR-CODING, ZERO BADGES/NUMBERS)
+  const renderZones = useCallback((map: any) => {
+    const L = (window as any).L;
+    if (!L || !map || !zoneLayersGroupRef.current) return;
+
+    zoneLayersGroupRef.current.clearLayers();
+
+    if (!showZoneBorders) return;
+
+    // 1. Render Domestic Indian Operational Sectors
+    INDIA_DISASTER_ZONES.forEach((zone) => {
+      const isSelected = effectiveZoneId === zone.id;
+      const latLngs = zone.coordinates.map(([lon, lat]) => [lat, lon]);
+
+      // Solid color boundary for domestic sectors
+      const polygon = L.polygon(latLngs, {
+        color: zone.borderColor,
+        weight: isSelected ? 3.5 : 2,
+        fillColor: zone.color,
+        fillOpacity: isSelected ? 0.25 : 0.08,
+        smoothFactor: 1.5,
+        interactive: false,
+      });
+
+      const dashedContour = L.polyline(latLngs, {
+        color: '#FFFFFF',
+        weight: 1.5,
+        dashArray: '4, 4',
+        opacity: isSelected ? 0.95 : 0.55,
+        interactive: false,
+      });
+
+      polygon.addTo(zoneLayersGroupRef.current);
+      dashedContour.addTo(zoneLayersGroupRef.current);
+    });
+  }, [showZoneBorders, effectiveZoneId]);
+
+  // RENDER ALL HAZARDS DIRECTLY (ANTI-COLLISION MICRO-FANNING: ALL VISIBLE, ZERO OVERLAP)
+  const renderDisasterMarkers = useCallback((map: any) => {
+    const L = (window as any).L;
+    if (!L || !map || !disasterMarkersGroupRef.current) return;
+
+    disasterMarkersGroupRef.current.clearLayers();
+
+    const validDisasters = (disasters || []).filter((d) => {
+      const lon = Number(d.longitude);
+      const lat = Number(d.latitude);
+      const itemZone = (d as any).zone || getDisasterZoneForCoords(lat, lon).id;
+      const matchesZone = !effectiveZoneId || itemZone === effectiveZoneId;
+      return matchesZone && !isNaN(lon) && !isNaN(lat) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+    });
+
+    // 1. Strict Deduplication: NEVER allow the same disaster or same location to render twice
+    const dedupedDisasters: LiveDisaster[] = [];
+    const seenEvents = new Set<string>();
+
+    validDisasters.forEach((d) => {
+      const lat = Number(d.latitude);
+      const lon = Number(d.longitude);
+      const dType = (d.disaster_type || '').toUpperCase();
+      // Spatial grid key (~12km resolution)
+      const spatialKey = `${dType}-${Math.round(lat * 8) / 8},${Math.round(lon * 8) / 8}`;
+      // Normalized name token
+      const nameKey = `${dType}-${(d.place || d.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 14)}`;
+
+      if (seenEvents.has(spatialKey) || seenEvents.has(nameKey)) {
+        return; // Discard duplicate marker!
+      }
+      seenEvents.add(spatialKey);
+      seenEvents.add(nameKey);
+      dedupedDisasters.push(d);
+    });
+
+    // 2. Group closely positioned hazards into spatial clusters to eliminate overlap
+    const clusters: LiveDisaster[][] = [];
+    dedupedDisasters.forEach((d) => {
+      const lat = Number(d.latitude);
+      const lon = Number(d.longitude);
+      let foundCluster = false;
+      for (const cluster of clusters) {
+        const first = cluster[0];
+        const dist = Math.hypot(lat - Number(first.latitude), lon - Number(first.longitude));
+        if (dist < 0.35) {
+          cluster.push(d);
+          foundCluster = true;
+          break;
+        }
+      }
+      if (!foundCluster) {
+        clusters.push([d]);
+      }
+    });
+
+    // 3. Render EVERY hazard with anti-collision fanning & staggered labels (NONE touch each other)
+    clusters.forEach((clusterItems) => {
+      const count = clusterItems.length;
+      clusterItems.forEach((d, index) => {
+        let lat = Number(d.latitude);
+        let lon = Number(d.longitude);
+
+        // Anti-collision fanning offset when multiple hazards exist in the same cluster
+        if (count > 1) {
+          const angle = (index / count) * (2 * Math.PI) + (Math.PI / 4);
+          const offsetRadius = 0.22; // ~25km separation offset
+          lat = lat + Math.sin(angle) * offsetRadius;
+          lon = lon + (Math.cos(angle) * offsetRadius) / Math.cos((lat * Math.PI) / 180);
+        }
+
+        const dType = (d.disaster_type || '').toUpperCase();
+        const color = getDisasterColor(dType);
+        const cleanPlace = (d.place || '').replace(/,\s*(India|Nepal|Bangladesh|Myanmar|Bhutan|Global)$/i, '').trim();
+        const displayLocation = cleanPlace || d.place || d.title;
+
+        // Clean, compact placename for top label
+        const primaryTown = displayLocation.split(',')[0].trim();
+        const shortName = primaryTown.length > 12 ? primaryTown.slice(0, 11) + '…' : primaryTown;
+
+        const isCrit = d.severity === 'CRITICAL';
+        const beaconColor = color.hex;
+
+        // Stagger label placement: top for even indices, bottom for odd indices so labels NEVER touch
+        const isBottom = count > 1 && index % 2 === 1;
+        const labelPosClass = isBottom 
+          ? 'top-full mt-1.5' 
+          : 'bottom-full mb-1.5';
+
+        const pinHtml = `
+          <div class="relative flex flex-col items-center select-none cursor-pointer group">
+            <!-- Non-Overlapping Staggered Label -->
+            <div class="absolute ${labelPosClass} px-1.5 py-0.5 rounded bg-black/90 text-white font-mono text-[9px] font-bold border border-neutral-700/90 shadow-md whitespace-nowrap flex items-center space-x-1 pointer-events-none transition-transform duration-100 group-hover:scale-105 z-20">
+              <span style="background-color: ${beaconColor};" class="w-1.5 h-1.5 rounded-full shrink-0"></span>
+              <span class="max-w-[100px] truncate uppercase tracking-wider">${shortName}</span>
+            </div>
+
+            <!-- Visible Luminous Beacon Dot (~14px) -->
+            <div class="relative flex items-center justify-center">
+              ${isCrit ? `<span style="background-color: ${beaconColor};" class="absolute w-5 h-5 rounded-full animate-ping opacity-35 pointer-events-none"></span>` : ''}
+              <div style="background-color: ${beaconColor};" class="w-3.5 h-3.5 rounded-full border-2 border-white shadow-md transition-transform duration-100 group-hover:scale-125 z-10"></div>
+            </div>
+          </div>
+        `;
+
+        const pinIcon = L.divIcon({
+          className: 'custom-hazard-beacon',
+          html: pinHtml,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        });
+
+        const marker = L.marker([lat, lon], { icon: pinIcon });
+
+        // Rich Leaflet Popup with Detailed Info
+        const popupContent = `
+          <div class="p-3.5 bg-neutral-950 text-white rounded-xl border border-neutral-800 shadow-2xl font-sans min-w-[240px] max-w-[280px]">
+            <div class="flex items-center justify-between pb-2 border-b border-neutral-800">
+              <div class="flex items-center space-x-2">
+                <span style="background-color: ${beaconColor};" class="w-2.5 h-2.5 rounded-full"></span>
+                <span class="font-mono text-[10px] font-bold uppercase tracking-wider text-neutral-300">${dType}</span>
+              </div>
+              <span class="text-[9px] font-mono px-2 py-0.5 rounded font-bold ${isCrit ? 'bg-rose-950 text-rose-300 border border-rose-800' : 'bg-neutral-900 text-neutral-300'}">${d.severity}</span>
+            </div>
+            <div class="py-2.5 space-y-1">
+              <h4 class="text-xs font-bold text-white leading-snug">${d.title || displayLocation}</h4>
+              <p class="text-[11px] text-neutral-400 font-mono">${displayLocation}</p>
+              ${d.description ? `<p class="text-[10px] text-neutral-300 line-clamp-3 leading-relaxed pt-1">${d.description}</p>` : ''}
+            </div>
+            <div class="pt-2 border-t border-neutral-900 flex items-center justify-between text-[9px] font-mono text-neutral-400">
+              <span>${lat.toFixed(2)}°N, ${lon.toFixed(2)}°E</span>
+              <span class="text-neutral-500">Verified</span>
+            </div>
+          </div>
+        `;
+
+        marker.bindPopup(popupContent, {
+          className: 'custom-hazard-leaflet-popup',
+          closeButton: true,
+          offset: [0, -12]
+        });
+
+        // Hover shows detail popup and closes immediately on mouseout (No 2-min timer!)
+        marker.on('mouseover', () => {
+          marker.openPopup();
+        });
+        marker.on('mouseout', () => {
+          marker.closePopup();
+        });
+
+        // Click keeps popup open and inspects in console
+        marker.on('click', (e: any) => {
+          L.DomEvent.stopPropagation(e);
+          marker.openPopup();
+          onInspectItem({ type: 'DISASTER', data: d });
+        });
+
+        marker.addTo(disasterMarkersGroupRef.current);
+      });
+    });
+  }, [disasters, effectiveZoneId, onInspectItem]);
+
+  // RENDER SHELTER MARKERS (SLEEK, COMPACT)
+  const renderShelters = useCallback((map: any) => {
+    const L = (window as any).L;
+    if (!L || !map || !shelterMarkersGroupRef.current) return;
+
+    shelterMarkersGroupRef.current.clearLayers();
+
+    if (!showShelters) return;
+
+    (shelters || []).forEach((sh) => {
+      const pct = Math.round((sh.current_occupancy / sh.total_capacity) * 100);
+      const shelterHtml = `
+        <div class="relative flex flex-col items-center group cursor-pointer select-none">
+          <div class="absolute bottom-5 hidden group-hover:flex items-center bg-black/90 text-white text-[9px] px-2 py-0.5 rounded shadow border border-neutral-700 whitespace-nowrap z-30 pointer-events-none">
+            ${sh.name} (${pct}%)
+          </div>
+          <div class="w-2 h-2 rounded-xs bg-white border border-black shadow"></div>
+        </div>
+      `;
+
+      const shelterIcon = L.divIcon({
+        className: 'custom-shelter-pin',
+        html: shelterHtml,
+        iconSize: [10, 10],
+        iconAnchor: [5, 5],
+      });
+
+      const marker = L.marker([sh.latitude, sh.longitude], { icon: shelterIcon });
+      marker.on('click', (e: any) => {
+        L.DomEvent.stopPropagation(e);
+        onInspectItem({ type: 'SHELTER', data: sh });
+      });
+
+      marker.addTo(shelterMarkersGroupRef.current);
+    });
+  }, [shelters, showShelters, onInspectItem]);
+
+  // INITIALIZE LEAFLET MAP ENGINE
   useEffect(() => {
-    if (!mapContainerRef.current) return;
+    let isMounted = true;
 
-    try {
-      const mapOptions: any = {
-        container: mapContainerRef.current,
-        style: getStyleForBasemap(basemap) as any,
-        center: [78.9629, 20.5937],
-        zoom: 4.2,
-        pitch: 0,
-        maxPitch: 75,
-      };
+    const initMap = () => {
+      if (!isMounted || !mapContainerRef.current) return;
+      const L = (window as any).L;
+      if (!L) return;
 
-      const map = new maplibregl.Map(mapOptions);
-      mapRef.current = map;
+      if (leafletMapRef.current) {
+        leafletMapRef.current.remove();
+        leafletMapRef.current = null;
+      }
 
-      map.on('pitch', () => setCurrentPitch(Math.round(map.getPitch())));
-      map.on('rotate', () => setCurrentBearing(Math.round(map.getBearing())));
+      // Initialize map centered by default on Northern Himalayas & Karakoram
+      const initialCenter = selectedCoordinates ? [selectedCoordinates.lat, selectedCoordinates.lon] : [33.2, 77.2];
+      const initialZoom = selectedCoordinates?.zoom || 5.4;
 
-      // Viewport movement listener: notifies when user pans to a different place
+      const map = L.map(mapContainerRef.current, {
+        center: initialCenter,
+        zoom: initialZoom,
+        minZoom: 3,
+        maxZoom: 18,
+        zoomControl: false,
+        attributionControl: false,
+        doubleClickZoom: false,
+        scrollWheelZoom: true,
+        wheelDebounceTime: 60,
+        zoomSnap: 0.5,
+        zoomDelta: 0.5,
+      });
+
+      leafletMapRef.current = map;
+
+      // Base Tile Layer
+      const tileCfg = getTileConfig(basemap);
+      currentTileLayerRef.current = L.tileLayer(tileCfg.url, {
+        attribution: tileCfg.attribution,
+        maxZoom: tileCfg.maxZoom,
+      }).addTo(map);
+
+      // Layer Groups for clean updating
+      zoneLayersGroupRef.current = L.layerGroup().addTo(map);
+      disasterMarkersGroupRef.current = L.layerGroup().addTo(map);
+      shelterMarkersGroupRef.current = L.layerGroup().addTo(map);
+      routeLayerGroupRef.current = L.layerGroup().addTo(map);
+
+      // Viewport movement notification
       map.on('moveend', () => {
         const center = map.getCenter();
         const bounds = map.getBounds();
@@ -186,35 +437,13 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
         }
       });
 
-      map.on('load', () => {
-        renderEarthquakeLayers(map, earthquakes);
-        renderDisasterMarkers(map, disasters);
-        embedShelterPlaces(map, shelters);
-        renderCityMarkers(map);
-
-        if (selectedCoordinates) {
-          flyToCoordinates(selectedCoordinates.lon, selectedCoordinates.lat, selectedCoordinates.zoom || 13);
-        }
-      });
-
-      // Map Canvas Click Handler: Clicking ANY place on Earth inspects it like Google Maps
-      map.on('click', async (e) => {
-        // Prevent click if clicking on an interactive quake or disaster layer
-        const bbox: [maplibregl.PointLike, maplibregl.PointLike] = [
-          [e.point.x - 8, e.point.y - 8],
-          [e.point.x + 8, e.point.y + 8],
-        ];
-        const features = map.queryRenderedFeatures(bbox, {
-          layers: ['quake-points', 'disaster-glow'].filter((l) => map.getLayer(l))
-        });
-        if (features && features.length > 0) return;
-
-        const lat = e.lngLat.lat;
-        const lon = e.lngLat.lng;
-
+      // Double-click place inspection (WITHOUT involuntary camera jumping)
+      map.on('dblclick', async (e: any) => {
+        const lat = e.latlng.lat;
+        const lon = e.latlng.lng;
         try {
           const geo = await api.reverseGeocode(lat, lon);
-          const parentCity = (geo as any).parent_city || geo.city || geo.district || geo.locality || 'Target Location';
+          const parentCity = (geo as any).parent_city || geo.city || geo.district || geo.locality || 'Location';
           const locality = geo.locality || parentCity;
           onInspectItem({
             type: 'PLACE',
@@ -225,712 +454,219 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
             lon,
             displayName: geo.display_name || `${parentCity} (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)`,
           } as any);
-          flyToCoordinates(lon, lat, Math.max(map.getZoom(), 11), currentPitch || 45);
         } catch {
           onInspectItem({
             type: 'PLACE',
-            name: 'Target Location',
-            parentCity: 'Target Location',
+            name: 'Location',
+            parentCity: 'Location',
             lat,
             lon,
             displayName: `Coordinates: ${lat.toFixed(2)}°, ${lon.toFixed(2)}°`,
           } as any);
-          flyToCoordinates(lon, lat, Math.max(map.getZoom(), 11), currentPitch || 45);
         }
       });
 
-      const resizeObserver = new ResizeObserver(() => {
-        if (mapRef.current) {
-          mapRef.current.resize();
-        }
+      // Re-run anti-collision decluttering dynamically on zoom changes
+      map.on('zoomend', () => {
+        renderDisasterMarkers(map);
       });
-      if (mapContainerRef.current) {
-        resizeObserver.observe(mapContainerRef.current);
+
+      // Render layers
+      renderZones(map);
+      renderDisasterMarkers(map);
+      renderShelters(map);
+
+      if (selectedCoordinates) {
+        map.flyTo([selectedCoordinates.lat, selectedCoordinates.lon], selectedCoordinates.zoom || 11, { duration: 1.2 });
+      }
+    };
+
+    // Load Leaflet CSS and JS via robust CDN loader
+    const loadLeafletAssets = async () => {
+      if (typeof window === 'undefined') return;
+
+      if (!document.getElementById('leaflet-css')) {
+        const link = document.createElement('link');
+        link.id = 'leaflet-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
       }
 
-      return () => {
-        resizeObserver.disconnect();
-        map.remove();
-        mapRef.current = null;
-      };
-    } catch (err) {
-      console.error("Map initialization error:", err);
-    }
+      if (!(window as any).L) {
+        await new Promise<void>((resolve) => {
+          const script = document.createElement('script');
+          script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+          script.async = true;
+          script.onload = () => resolve();
+          script.onerror = () => {
+            // Fallback CDN if unpkg is blocked
+            const fallback = document.createElement('script');
+            fallback.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js';
+            fallback.onload = () => resolve();
+            document.head.appendChild(fallback);
+          };
+          document.head.appendChild(script);
+        });
+      }
+
+      initMap();
+    };
+
+    loadLeafletAssets();
+
+    return () => {
+      isMounted = false;
+      if (leafletMapRef.current) {
+        leafletMapRef.current.remove();
+        leafletMapRef.current = null;
+      }
+    };
   }, []);
 
-  // Update Basemap & Terrain
+  // Update Basemap Tiles
   useEffect(() => {
-    if (!mapRef.current) return;
-    const map = mapRef.current;
-    
-    const center = map.getCenter();
-    const zoom = map.getZoom();
-    const pitch = map.getPitch();
-    const bearing = map.getBearing();
+    const map = leafletMapRef.current;
+    const L = (window as any).L;
+    if (!map || !L) return;
 
-    map.setStyle(getStyleForBasemap(basemap) as any);
-    map.once('style.load', () => {
-      map.setCenter(center);
-      map.setZoom(zoom);
-      map.setPitch(pitch);
-      map.setBearing(bearing);
-      renderEarthquakeLayers(map, earthquakes);
-      renderDisasterMarkers(map, disasters);
-      embedShelterPlaces(map, shelters);
-      renderCityMarkers(map);
-    });
-  }, [basemap, terrainEnabled]);
-
-  // Update Earthquake Layer
-  useEffect(() => {
-    if (!mapRef.current) return;
-    const map = mapRef.current;
-    if (map.isStyleLoaded()) {
-      renderEarthquakeLayers(map, earthquakes);
-    } else {
-      map.once('style.load', () => {
-        renderEarthquakeLayers(map, earthquakes);
-      });
-    }
-  }, [earthquakes]);
-
-  // Update Multi-Hazard Disasters Layer
-  useEffect(() => {
-    if (!mapRef.current) return;
-    const map = mapRef.current;
-    if (map.isStyleLoaded() || map.loaded()) {
-      renderDisasterMarkers(map, disasters || []);
-    } else {
-      map.once('style.load', () => {
-        renderDisasterMarkers(map, disasters || []);
-      });
-    }
-  }, [disasters]);
-
-
-  // Update Shelters Layer
-  useEffect(() => {
-    if (!mapRef.current || !mapRef.current.isStyleLoaded()) return;
-    embedShelterPlaces(mapRef.current, shelters);
-  }, [shelters, showSheltersOnGlobe]);
-
-  // 2. GUARANTEED FLY-TO WHEN A TOWN OR COORDINATE IS SEARCHED
-  const flyToCoordinates = (lon: number, lat: number, zoom = 13, pitch = 55) => {
-    if (!mapRef.current) return;
-    const map = mapRef.current;
-
-    map.stop();
-    map.flyTo({
-      center: [lon, lat],
-      zoom: zoom,
-      pitch: pitch,
-      essential: true,
-      duration: 2200,
-    });
-
-    if (searchMarkerRef.current) {
-      searchMarkerRef.current.remove();
+    if (currentTileLayerRef.current) {
+      map.removeLayer(currentTileLayerRef.current);
     }
 
-    // Minimal single-color target marker (Zero emojis)
-    const pinEl = document.createElement('div');
-    pinEl.className = 'flex flex-col items-center select-none animate-in fade-in';
-    pinEl.innerHTML = `
-      <div class="bg-black text-white font-mono text-[10px] px-2 py-0.5 rounded shadow-sm border border-white/90 whitespace-nowrap mb-1">
-        Target Location
-      </div>
-      <div class="relative flex items-center justify-center">
-        <div class="absolute w-8 h-8 rounded-full bg-black/30 dark:bg-white/30 animate-ping"></div>
-        <div class="w-3.5 h-3.5 rounded-full bg-black dark:bg-white border-2 border-white dark:border-black shadow-md"></div>
-      </div>
-    `;
+    const tileCfg = getTileConfig(basemap);
+    currentTileLayerRef.current = L.tileLayer(tileCfg.url, {
+      attribution: tileCfg.attribution,
+      maxZoom: tileCfg.maxZoom,
+    }).addTo(map);
+  }, [basemap]);
 
-    const marker = new maplibregl.Marker({ element: pinEl })
-      .setLngLat([lon, lat])
-      .addTo(map);
-
-    searchMarkerRef.current = marker;
-  };
-
+  // Update Zone Borders
   useEffect(() => {
-    if (!selectedCoordinates) return;
-    flyToCoordinates(
-      selectedCoordinates.lon, 
-      selectedCoordinates.lat, 
-      selectedCoordinates.zoom || 13,
-      currentPitch || 55
+    if (leafletMapRef.current) {
+      renderZones(leafletMapRef.current);
+    }
+  }, [showZoneBorders, effectiveZoneId, renderZones]);
+
+  // Update Disaster Markers
+  useEffect(() => {
+    if (leafletMapRef.current) {
+      renderDisasterMarkers(leafletMapRef.current);
+    }
+  }, [disasters, effectiveZoneId, renderDisasterMarkers]);
+
+  // Update Shelters
+  useEffect(() => {
+    if (leafletMapRef.current) {
+      renderShelters(leafletMapRef.current);
+    }
+  }, [shelters, showShelters, renderShelters]);
+
+  // Selected Coordinates Camera Fly-to
+  useEffect(() => {
+    if (!leafletMapRef.current || !selectedCoordinates) return;
+    leafletMapRef.current.flyTo(
+      [selectedCoordinates.lat, selectedCoordinates.lon],
+      selectedCoordinates.zoom || 11,
+      { duration: 1.2 }
     );
   }, [selectedCoordinates]);
 
-  // Helper to generate 20km surveillance circle GeoJSON
-  const createGeoJsonCircle = (center: [number, number], radiusKm: number, points = 64) => {
-    const coords: [number, number][] = [];
-    const distanceX = radiusKm / (111.32 * Math.cos((center[1] * Math.PI) / 180));
-    const distanceY = radiusKm / 110.574;
-
-    for (let i = 0; i < points; i++) {
-      const theta = (i / points) * (2 * Math.PI);
-      const x = distanceX * Math.cos(theta);
-      const y = distanceY * Math.sin(theta);
-      coords.push([center[0] + x, center[1] + y]);
-    }
-    coords.push(coords[0]);
-
-    return {
-      type: 'Feature' as const,
-      geometry: {
-        type: 'Polygon' as const,
-        coordinates: [coords],
-      },
-      properties: {},
-    };
-  };
-
-  const render20kmPerimeter = (map: maplibregl.Map, lon: number, lat: number) => {
-    try {
-      const circleFeature = createGeoJsonCircle([lon, lat], 20);
-
-      if (map.getLayer('user-20km-fill')) map.removeLayer('user-20km-fill');
-      if (map.getLayer('user-20km-stroke')) map.removeLayer('user-20km-stroke');
-      if (map.getSource('user-20km-source')) map.removeSource('user-20km-source');
-
-      map.addSource('user-20km-source', {
-        type: 'geojson',
-        data: circleFeature,
-      });
-
-      map.addLayer({
-        id: 'user-20km-fill',
-        type: 'fill',
-        source: 'user-20km-source',
-        paint: {
-          'fill-color': '#737373',
-          'fill-opacity': 0.06,
-        },
-      });
-
-      map.addLayer({
-        id: 'user-20km-stroke',
-        type: 'line',
-        source: 'user-20km-source',
-        paint: {
-          'line-color': '#525252',
-          'line-width': 1.5,
-          'line-dasharray': [3, 2],
-          'line-opacity': 0.65,
-        },
-      });
-    } catch (e) {
-      console.warn("Perimeter render error:", e);
-    }
-  };
-
-  // Handle User Location (Zoom out to 20km radius view + render perimeter circle)
+  // User Location Marker
   useEffect(() => {
-    if (!mapRef.current || !userLocation) return;
-    const map = mapRef.current;
+    const map = leafletMapRef.current;
+    const L = (window as any).L;
+    if (!map || !L) return;
 
     if (userMarkerRef.current) {
-      userMarkerRef.current.remove();
+      map.removeLayer(userMarkerRef.current);
+      userMarkerRef.current = null;
     }
 
-    const el = document.createElement('div');
-    el.className = 'flex flex-col items-center select-none';
-    el.innerHTML = `
-      <div class="bg-black dark:bg-white text-white dark:text-black font-semibold text-[10px] px-3 py-1 rounded-full shadow-lg border border-white/90 whitespace-nowrap mb-1.5 flex items-center space-x-1.5">
-        <span class="w-1.5 h-1.5 rounded-full bg-white dark:bg-black animate-ping"></span>
-        <span>20km Sector: ${userLocation.locality || 'GPS'}</span>
-      </div>
-      <div class="relative flex items-center justify-center pointer-events-none">
-        <div class="absolute w-48 h-48 rounded-full border border-neutral-500/30 animate-radar-sweep bg-gradient-to-tr from-neutral-500/20 via-transparent to-transparent"></div>
-        <div class="absolute w-32 h-32 rounded-full border border-neutral-400/40 animate-ping"></div>
-        <div class="absolute w-16 h-16 rounded-full bg-neutral-500/20 animate-pulse"></div>
-        <div class="w-4 h-4 rounded-full bg-black dark:bg-white border-2 border-white dark:border-black shadow-xl z-10"></div>
-      </div>
-    `;
-
-    const marker = new maplibregl.Marker({ element: el })
-      .setLngLat([userLocation.lon, userLocation.lat])
-      .addTo(map);
-
-    userMarkerRef.current = marker;
-
-    // Zoom out to 20km radius bounding box
-    const lat = userLocation.lat;
-    const lon = userLocation.lon;
-    const latDelta = 20 / 110.574;
-    const lonDelta = 20 / (111.32 * Math.cos((lat * Math.PI) / 180));
-
-    map.fitBounds([
-      [lon - lonDelta, lat - latDelta],
-      [lon + lonDelta, lat + latDelta]
-    ], {
-      padding: { top: 90, bottom: 90, left: 90, right: 90 },
-      pitch: currentPitch || 45,
-      duration: 2400,
-      essential: true,
-    });
-
-    // Render 20km circle perimeter
-    render20kmPerimeter(map, lon, lat);
+    if (userLocation) {
+      const userHtml = `
+        <div class="relative flex items-center justify-center">
+          <div class="absolute w-8 h-8 rounded-full bg-blue-500/30 animate-ping"></div>
+          <div class="w-4 h-4 rounded-full bg-blue-600 border-2 border-white shadow-xl"></div>
+        </div>
+      `;
+      const userIcon = L.divIcon({
+        className: 'user-loc-pin',
+        html: userHtml,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+      });
+      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lon], { icon: userIcon }).addTo(map);
+    }
   }, [userLocation]);
 
-  // Markers visibility manager: ensures all hazard & shelter markers remain crisp and visible
-  const updateMarkersOcclusion = (map: maplibregl.Map | null) => {
-    if (!map) return;
-    try {
-      disasterMarkersRef.current.forEach((marker) => {
-        const el = marker.getElement();
-        if (el) el.style.display = '';
-      });
-
-      shelterMarkersRef.current.forEach((marker) => {
-        const el = marker.getElement();
-        if (el) el.style.display = '';
-      });
-
-      if (searchMarkerRef.current) {
-        const el = searchMarkerRef.current.getElement();
-        if (el) el.style.display = '';
-      }
-    } catch {}
-  };
-
-  // 3. EMBED RELIEF SHELTERS (Minimal, Professional Pin with Tooltip on Hover)
-  const embedShelterPlaces = (map: maplibregl.Map, shelterList: ReliefShelter[]) => {
-    shelterMarkersRef.current.forEach((m) => m.remove());
-    shelterMarkersRef.current = [];
-
-    if (!showSheltersOnGlobe) return;
-
-    shelterList.forEach((sh) => {
-      const el = document.createElement('div');
-      el.className = 'relative flex flex-col items-center group cursor-pointer select-none';
-      const pct = Math.round((sh.current_occupancy / sh.total_capacity) * 100);
-      
-      el.innerHTML = `
-        <!-- Tooltip appears strictly on hover -->
-        <div class="absolute bottom-5 hidden group-hover:flex items-center bg-black text-white dark:bg-white dark:text-black font-semibold text-[9px] px-2 py-0.5 rounded shadow-lg border border-neutral-700 dark:border-neutral-300 whitespace-nowrap z-30 pointer-events-none">
-          ${sh.name} (${pct}%)
-        </div>
-        <div class="w-2.5 h-2.5 rounded-sm bg-black dark:bg-white border border-white dark:border-black shadow-xs transition-transform duration-150 transform group-hover:scale-125"></div>
-      `;
-
-      el.addEventListener('click', () => {
-        onInspectItem({ type: 'SHELTER', data: sh });
-        flyToCoordinates(sh.longitude, sh.latitude, 14, currentPitch || 55);
-      });
-
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat([sh.longitude, sh.latitude])
-        .addTo(map);
-
-      shelterMarkersRef.current.push(marker);
-    });
-
-    updateMarkersOcclusion(map);
-  };
-
-  // 4b. COLOR-CODED REAL-WORLD DISASTERS WITH OVERLAP COLLISION AVOIDANCE
-  const getDisasterColor = (type: string) => {
-    switch (type) {
-      case 'FLOOD':
-        return { hex: '#0284C7', ping: '#38BDF8' };
-      case 'CYCLONE':
-        return { hex: '#6366F1', ping: '#818CF8' };
-      case 'TSUNAMI':
-        return { hex: '#0D9488', ping: '#2DD4BF' };
-      case 'FIRE':
-        return { hex: '#E11D48', ping: '#FB7185' };
-      case 'EARTHQUAKE':
-      default:
-        return { hex: '#D97706', ping: '#FBBF24' };
-    }
-  };
-
-  const getDisasterSvg = (type: string) => {
-    switch (type) {
-      case 'FLOOD':
-        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7.5 0M2 18c2.5-3 5-3 7.5 0s5 3 7.5 0 5-3 7.5 0"/></svg>`;
-      case 'CYCLONE':
-        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7a5 5 0 0 1 5 5c0 2.5-2 4-5 4s-4-2-4-4"/></svg>`;
-      case 'TSUNAMI':
-        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20c4-4 8-16 12-16 3 0 6 6 8 8M2 20h20"/></svg>`;
-      case 'FIRE':
-        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>`;
-      case 'EARTHQUAKE':
-      default:
-        return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
-    }
-  };
-
-  // Render Clickable City Labels on Globe
-  const renderCityMarkers = (map: maplibregl.Map) => {
-    cityMarkersRef.current.forEach((m) => m.remove());
-    cityMarkersRef.current = [];
-
-    REAL_CITIES.forEach((c) => {
-      const el = document.createElement('div');
-      el.className = 'group flex items-center space-x-1.5 cursor-pointer select-none transition-transform duration-150 hover:scale-110';
-      el.innerHTML = `
-        <div class="w-2 h-2 rounded-full bg-white dark:bg-black border border-neutral-900 dark:border-neutral-100 shadow-xs group-hover:bg-blue-600 transition"></div>
-        <span class="text-[10px] font-semibold text-neutral-800 dark:text-neutral-200 px-1.5 py-0.5 rounded-md bg-white/90 dark:bg-black/90 backdrop-blur-xs border border-neutral-300 dark:border-neutral-700 shadow-xs group-hover:border-neutral-900 dark:group-hover:border-neutral-100 transition">
-          ${c.name}
-        </span>
-      `;
-
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        onInspectItem({
-          type: 'PLACE',
-          name: c.name,
-          parentCity: c.name,
-          locality: c.name,
-          lat: c.latitude,
-          lon: c.longitude,
-          displayName: `${c.name}, ${c.state ? c.state + ', ' : ''}${c.country}`,
-        } as any);
-        flyToCoordinates(c.longitude, c.latitude, 11, currentPitch || 45);
-      });
-
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat([c.longitude, c.latitude])
-        .addTo(map);
-
-      cityMarkersRef.current.push(marker);
-    });
-  };
-
-  const renderDisasterMarkers = (map: maplibregl.Map, list: LiveDisaster[]) => {
-    disasterMarkersRef.current.forEach((m) => m.remove());
-    disasterMarkersRef.current = [];
-
-    // Filter valid coordinates strictly to prevent invalid LngLat throws
-    const validDisasters = (list || []).filter((d) => {
-      const lon = Number(d.longitude);
-      const lat = Number(d.latitude);
-      return !isNaN(lon) && !isNaN(lat) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
-    });
-
-    // 1. Hardware-Accelerated WebGL Disaster Layer (Guaranteed 100% visible worldwide)
-    const geojsonData: any = {
-      type: 'FeatureCollection',
-      features: validDisasters.map((d) => ({
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [Number(d.longitude), Number(d.latitude)],
-        },
-        properties: {
-          id: d.id,
-          title: d.title,
-          place: d.place,
-          disaster_type: d.disaster_type,
-          severity: d.severity,
-          risk_score: d.risk_score || 70,
-        },
-      })),
-    };
-
-    if (map.getLayer('disaster-glow')) map.removeLayer('disaster-glow');
-    if (map.getLayer('disaster-points')) map.removeLayer('disaster-points');
-    if (map.getSource('live-disasters-source')) map.removeSource('live-disasters-source');
-
-    map.addSource('live-disasters-source', {
-      type: 'geojson',
-      data: geojsonData,
-    });
-
-    map.addLayer({
-      id: 'disaster-glow',
-      type: 'circle',
-      source: 'live-disasters-source',
-      paint: {
-        'circle-radius': [
-          'interpolate',
-          ['linear'],
-          ['zoom'],
-          2, 11,
-          6, 18,
-          10, 28,
-        ],
-        'circle-color': [
-          'match',
-          ['get', 'disaster_type'],
-          'FLOOD', '#0284C7',
-          'CYCLONE', '#6366F1',
-          'TSUNAMI', '#0D9488',
-          'FIRE', '#E11D48',
-          '#D97706'
-        ],
-        'circle-opacity': 0.28,
-        'circle-stroke-width': 1.5,
-        'circle-stroke-color': '#FFFFFF',
-      },
-    });
-
-    map.addLayer({
-      id: 'disaster-points',
-      type: 'circle',
-      source: 'live-disasters-source',
-      paint: {
-        'circle-radius': [
-          'interpolate',
-          ['linear'],
-          ['zoom'],
-          2, 5.5,
-          6, 8,
-          10, 12,
-        ],
-        'circle-color': [
-          'match',
-          ['get', 'disaster_type'],
-          'FLOOD', '#0284C7',
-          'CYCLONE', '#6366F1',
-          'TSUNAMI', '#0D9488',
-          'FIRE', '#E11D48',
-          '#D97706'
-        ],
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#FFFFFF',
-      },
-    });
-
-    map.on('click', 'disaster-points', (e) => {
-      if (!e.features || !e.features[0]) return;
-      const props = e.features[0].properties as any;
-      const matched = validDisasters.find((d) => d.id === props.id);
-      if (matched) {
-        onInspectItem({ type: 'DISASTER', data: matched });
-        flyToCoordinates(matched.longitude, matched.latitude, 11, currentPitch || 45);
-      }
-    });
-
-    // 2. Interactive DOM Pins with Icons & Tooltips
-    validDisasters.forEach((d) => {
-      const el = document.createElement('div');
-      el.className = 'relative flex flex-col items-center group cursor-pointer select-none';
-      const iconSvg = getDisasterSvg(d.disaster_type);
-      const color = getDisasterColor(d.disaster_type);
-
-      const cleanPlace = (d.place || '').replace(/,\s*(India|Global)$/i, '').trim();
-      const displayLocation = cleanPlace || d.place || d.title;
-
-      el.innerHTML = `
-        <!-- Floating Tooltip on Hover Only (Zero Label Collision) -->
-        <div class="absolute bottom-9 hidden group-hover:flex items-center space-x-2 bg-black/95 text-white dark:bg-white/95 dark:text-black font-sans text-[11px] px-3 py-1.5 rounded-lg shadow-2xl border border-neutral-700/60 dark:border-neutral-300/60 z-40 whitespace-nowrap pointer-events-none backdrop-blur-md">
-          <span style="background-color: ${color.ping};" class="w-2 h-2 rounded-full animate-ping flex-shrink-0"></span>
-          <div class="flex flex-col text-left">
-            <span class="font-mono uppercase tracking-wider text-[9px] text-neutral-400 dark:text-neutral-500 font-bold">${d.disaster_type} • ${d.severity || 'ALERT'}</span>
-            <span class="font-semibold leading-tight">${displayLocation}</span>
-          </div>
-        </div>
-        <!-- Monochrome Pill Shell with Hazard-Colored Icon Inside -->
-        <div style="width: 28px; height: 28px; min-width: 28px; min-height: 28px; color: ${color.hex};" class="rounded-full bg-white dark:bg-black flex items-center justify-center border-2 border-white dark:border-neutral-800 shadow-md transition-transform duration-200 transform group-hover:scale-125 z-20">
-          ${iconSvg}
-        </div>
-      `;
-
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        onInspectItem({ type: 'DISASTER', data: d });
-        flyToCoordinates(d.longitude, d.latitude, 11, currentPitch || 45);
-      });
-
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat([d.longitude, d.latitude])
-        .addTo(map);
-
-      disasterMarkersRef.current.push(marker);
-    });
-
-    updateMarkersOcclusion(map);
-  };
-
-  // 5. RENDER REAL-TIME USGS EARTHQUAKES WITH MONOCHROMATIC RISK BUFFERS
-  const renderEarthquakeLayers = (map: maplibregl.Map, quakes: LiveEarthquake[]) => {
-    const geojsonData: any = {
-      type: 'FeatureCollection',
-      features: quakes.map((q) => ({
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [q.longitude, q.latitude],
-        },
-        properties: {
-          id: q.id,
-          title: q.title,
-          place: q.place,
-          magnitude: q.magnitude,
-          depth_km: q.depth_km,
-          time: q.time,
-          risk_score: q.risk_score,
-          severity: q.severity,
-          buffer_radius_km: q.buffer_radius_km,
-        },
-      })),
-    };
-
-    if (map.getLayer('quake-points')) map.removeLayer('quake-points');
-    if (map.getLayer('quake-buffers')) map.removeLayer('quake-buffers');
-    if (map.getSource('live-quakes-source')) map.removeSource('live-quakes-source');
-
-    map.addSource('live-quakes-source', {
-      type: 'geojson',
-      data: geojsonData,
-    });
-
-    map.addLayer({
-      id: 'quake-buffers',
-      type: 'circle',
-      source: 'live-quakes-source',
-      paint: {
-        'circle-radius': [
-          'interpolate',
-          ['linear'],
-          ['zoom'],
-          2, ['*', ['get', 'magnitude'], 2.8],
-          6, ['*', ['get', 'magnitude'], 7.0],
-          10, ['*', ['get', 'magnitude'], 16.0],
-        ],
-        'circle-color': '#D97706',
-        'circle-opacity': 0.22,
-        'circle-stroke-width': 1.5,
-        'circle-stroke-color': '#B45309',
-      },
-    });
-
-    map.addLayer({
-      id: 'quake-points',
-      type: 'circle',
-      source: 'live-quakes-source',
-      paint: {
-        'circle-radius': [
-          'interpolate',
-          ['linear'],
-          ['get', 'magnitude'],
-          2.5, 4,
-          5.0, 6.5,
-          7.0, 10
-        ],
-        'circle-color': '#D97706',
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#FFFFFF',
-      },
-    });
-
-    map.on('click', 'quake-points', (e) => {
-      if (!e.features || !e.features[0]) return;
-      const props = e.features[0].properties as any;
-      const quakeObj: LiveEarthquake = {
-        id: props.id,
-        title: props.title,
-        place: props.place,
-        magnitude: Number(props.magnitude),
-        depth_km: Number(props.depth_km),
-        time: Number(props.time),
-        url: '',
-        tsunami: false,
-        longitude: (e.lngLat as any).lng,
-        latitude: (e.lngLat as any).lat,
-        risk_score: Number(props.risk_score),
-        severity: props.severity,
-        buffer_radius_km: Number(props.buffer_radius_km),
-      };
-      onInspectItem({ type: 'QUAKE', data: quakeObj });
-    });
-
-    map.on('mouseenter', 'quake-points', () => {
-      map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', 'quake-points', () => {
-      map.getCanvas().style.cursor = '';
-    });
-  };
-
-  // 6. DIRECT 3D ANGLE & PITCH ADJUSTMENT
-  const setPitchAngle = (pitch: number) => {
-    if (!mapRef.current) return;
-    const clamped = Math.min(85, Math.max(0, pitch));
-    setCurrentPitch(clamped);
-    mapRef.current.setPitch(clamped);
-  };
-
-  const adjustPitchStep = (delta: number) => {
-    if (!mapRef.current) return;
-    const next = Math.min(85, Math.max(0, currentPitch + delta));
-    setPitchAngle(next);
-  };
-
-  const zoomIn = () => {
-    if (mapRef.current) mapRef.current.zoomIn();
-  };
-
-  const zoomOut = () => {
-    if (mapRef.current) mapRef.current.zoomOut();
-  };
-
-  const resetNorth = () => {
-    if (mapRef.current) {
-      mapRef.current.easeTo({ bearing: 0 });
-      setCurrentBearing(0);
-    }
-  };
-
   return (
-    <div className="relative w-full h-full">
-      <div ref={mapContainerRef} className="w-full h-full" />
+    <div className="relative w-full h-full bg-[#0B0F19] overflow-hidden select-none">
+      {/* Map DOM Container (No isolated z-0 so Leaflet panes participate in stacking) */}
+      <div ref={mapContainerRef} className="w-full h-full relative" tabIndex={0} />
 
-      {/* 1. BOTTOM-LEFT LAYER DRAWER */}
-      <div className="absolute bottom-6 left-4 sm:left-6 z-30 select-none">
+      {/* Embedded Floating Overlays (SearchCard) */}
+      {children}
+
+      {/* 1. LAYER SWITCHER (Top Right - No collision with SearchCard) */}
+      <div className="absolute top-4 right-4 sm:right-6 z-[450] flex flex-col items-end space-y-2 select-none pointer-events-auto">
         <div className="relative">
           <button
             onClick={() => setIsLayerMenuOpen(!isLayerMenuOpen)}
-            className="group flex flex-col items-center bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-lg overflow-hidden hover:scale-105 transition-all w-14 h-14 relative"
+            className={`p-2.5 rounded-xl border backdrop-blur-md shadow-2xl transition flex items-center space-x-2 ${
+              isLayerMenuOpen
+                ? 'bg-black text-white border-neutral-700'
+                : 'bg-black/85 text-white/90 border-neutral-800 hover:bg-black hover:text-white'
+            }`}
+            title="Map Basemaps & Layers"
           >
-            <div className="w-full h-full bg-neutral-900 dark:bg-neutral-950 flex items-center justify-center">
-              <Layers className="w-5 h-5 text-white group-hover:rotate-12 transition-transform" />
-            </div>
-            <span className="absolute bottom-0 inset-x-0 bg-black/90 backdrop-blur-xs text-[9px] font-bold text-white uppercase text-center py-0.5">
-              Layers
+            <Layers className="w-4 h-4 text-sky-400" />
+            <span className="text-xs font-bold uppercase tracking-wider">
+              {basemap === 'satellite' ? 'Satellite' : basemap === 'street' ? 'Street' : 'Dark'}
             </span>
           </button>
 
           {isLayerMenuOpen && (
-            <div className="absolute bottom-16 left-0 bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-xl p-3 w-52 space-y-2 text-xs">
-              <div className="font-semibold text-[10px] uppercase tracking-wider text-neutral-400">
-                Basemap Layer
+            <div className="absolute top-12 right-0 w-60 bg-black/95 text-white border border-neutral-800 rounded-2xl shadow-2xl p-3.5 space-y-3 animate-in fade-in backdrop-blur-xl z-50">
+              <div className="flex items-center justify-between pb-1.5 border-b border-neutral-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                  Select Basemap
+                </span>
+                <button
+                  onClick={() => setIsLayerMenuOpen(false)}
+                  className="p-1 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-white transition"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
 
-              <div className="grid grid-cols-3 gap-1">
+              <div className="grid grid-cols-3 gap-1.5 text-xs">
                 <button
                   onClick={() => {
                     setBasemap('satellite');
                     setIsLayerMenuOpen(false);
                   }}
-                  className={`p-1.5 rounded-lg text-center flex flex-col items-center space-y-1 border transition ${
+                  className={`p-2 rounded-xl text-center flex flex-col items-center space-y-1 border transition ${
                     basemap === 'satellite'
-                      ? 'border-black dark:border-white bg-neutral-100 dark:bg-neutral-900 font-semibold text-black dark:text-white'
-                      : 'border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300'
+                      ? 'border-sky-500 bg-sky-950/40 text-sky-300 font-bold'
+                      : 'border-neutral-800 text-neutral-400 hover:border-neutral-700'
                   }`}
                 >
-                  <Globe2 className="w-3.5 h-3.5" />
-                  <span className="text-[10px]">Satellite</span>
+                  <span className="text-[11px]">Satellite</span>
                 </button>
 
                 <button
                   onClick={() => {
-                    setBasemap('osm');
+                    setBasemap('street');
                     setIsLayerMenuOpen(false);
                   }}
-                  className={`p-1.5 rounded-lg text-center flex flex-col items-center space-y-1 border transition ${
-                    basemap === 'osm'
-                      ? 'border-black dark:border-white bg-neutral-100 dark:bg-neutral-900 font-semibold text-black dark:text-white'
-                      : 'border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300'
+                  className={`p-2 rounded-xl text-center flex flex-col items-center space-y-1 border transition ${
+                    basemap === 'street'
+                      ? 'border-sky-500 bg-sky-950/40 text-sky-300 font-bold'
+                      : 'border-neutral-800 text-neutral-400 hover:border-neutral-700'
                   }`}
                 >
-                  <MapPin className="w-3.5 h-3.5" />
-                  <span className="text-[10px]">OSM</span>
+                  <span className="text-[11px]">Street</span>
                 </button>
 
                 <button
@@ -938,35 +674,40 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
                     setBasemap('dark');
                     setIsLayerMenuOpen(false);
                   }}
-                  className={`p-1.5 rounded-lg text-center flex flex-col items-center space-y-1 border transition ${
+                  className={`p-2 rounded-xl text-center flex flex-col items-center space-y-1 border transition ${
                     basemap === 'dark'
-                      ? 'border-black dark:border-white bg-neutral-100 dark:bg-neutral-900 font-semibold text-black dark:text-white'
-                      : 'border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300'
+                      ? 'border-sky-500 bg-sky-950/40 text-sky-300 font-bold'
+                      : 'border-neutral-800 text-neutral-400 hover:border-neutral-700'
                   }`}
                 >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span className="text-[10px]">Dark</span>
+                  <span className="text-[11px]">Dark</span>
                 </button>
               </div>
 
-              <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800 space-y-1.5 text-[11px]">
-                <label className="flex items-center justify-between text-neutral-700 dark:text-neutral-300 cursor-pointer">
-                  <span>3D Elevation Mesh</span>
+              <div className="pt-2 border-t border-neutral-800 space-y-2 text-xs">
+                <label className="flex items-center justify-between text-neutral-300 cursor-pointer">
+                  <span className="flex items-center space-x-1.5">
+                    <span className="w-2 h-2 rounded-full bg-sky-400"></span>
+                    <span>5 Operational Zones</span>
+                  </span>
                   <input
                     type="checkbox"
-                    checked={terrainEnabled}
-                    onChange={(e) => setTerrainEnabled(e.target.checked)}
-                    className="rounded accent-black dark:accent-white"
+                    checked={showZoneBorders}
+                    onChange={(e) => setShowZoneBorders(e.target.checked)}
+                    className="rounded accent-sky-500"
                   />
                 </label>
 
-                <label className="flex items-center justify-between text-neutral-700 dark:text-neutral-300 cursor-pointer">
-                  <span>Relief Shelters</span>
+                <label className="flex items-center justify-between text-neutral-300 cursor-pointer">
+                  <span className="flex items-center space-x-1.5">
+                    <span className="w-2 h-2 rounded-full bg-white"></span>
+                    <span>Relief Shelters</span>
+                  </span>
                   <input
                     type="checkbox"
-                    checked={showSheltersOnGlobe}
-                    onChange={(e) => setShowSheltersOnGlobe(e.target.checked)}
-                    className="rounded accent-black dark:accent-white"
+                    checked={showShelters}
+                    onChange={(e) => setShowShelters(e.target.checked)}
+                    className="rounded accent-sky-500"
                   />
                 </label>
               </div>
@@ -975,127 +716,37 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
         </div>
       </div>
 
-      {/* 2. DEDICATED 3D ANGLE & CAMERA CONTROLS (Right Side) */}
-      <div className="absolute bottom-6 right-4 sm:right-6 z-30 flex flex-col items-end space-y-2 select-none pointer-events-auto">
-        {showAngleSlider && (
-          <div 
-            ref={angleSliderRef}
-            className="bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-2xl p-3.5 mb-1 space-y-2.5 text-xs w-48 animate-in fade-in"
-          >
-            <div className="flex items-center justify-between pb-1 border-b border-neutral-100 dark:border-neutral-800">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 flex items-center space-x-1">
-                <Sliders className="w-3 h-3 text-neutral-700 dark:text-neutral-300" />
-                <span>3D Pitch Angle</span>
-              </span>
-              <div className="flex items-center space-x-1.5">
-                <span className="font-mono font-bold text-xs text-neutral-900 dark:text-white">
-                  {currentPitch}°
-                </span>
-                <button
-                  onClick={() => setShowAngleSlider(false)}
-                  className="p-1 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-black dark:hover:text-white transition"
-                  title="Close 3D Angle"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            <input
-              type="range"
-              min="0"
-              max="85"
-              step="1"
-              value={currentPitch}
-              onChange={(e) => setPitchAngle(Number(e.target.value))}
-              className="w-full accent-black dark:accent-white cursor-pointer h-1.5 bg-neutral-200 dark:bg-neutral-800 rounded-lg"
-            />
-
-            <div className="grid grid-cols-3 gap-1 text-[10px] font-semibold pt-0.5">
-              <button
-                onClick={() => setPitchAngle(0)}
-                className={`py-0.5 rounded border transition ${
-                  currentPitch === 0
-                    ? 'bg-black text-white dark:bg-white dark:text-black border-black dark:border-white'
-                    : 'border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400'
-                }`}
-              >
-                0°
-              </button>
-              <button
-                onClick={() => setPitchAngle(50)}
-                className={`py-0.5 rounded border transition ${
-                  currentPitch >= 45 && currentPitch <= 55
-                    ? 'bg-black text-white dark:bg-white dark:text-black border-black dark:border-white'
-                    : 'border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400'
-                }`}
-              >
-                50°
-              </button>
-              <button
-                onClick={() => setPitchAngle(80)}
-                className={`py-0.5 rounded border transition ${
-                  currentPitch >= 75
-                    ? 'bg-black text-white dark:bg-white dark:text-black border-black dark:border-white'
-                    : 'border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400'
-                }`}
-              >
-                80°
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-white dark:bg-black border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-lg overflow-hidden flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800 text-neutral-800 dark:text-neutral-200">
+      {/* 2. CAMERA CONTROLS (Right Side) */}
+      <div className="absolute bottom-6 right-4 sm:right-6 z-20 flex flex-col items-end space-y-2 select-none pointer-events-auto">
+        <div className="bg-black/90 border border-neutral-800 rounded-xl shadow-2xl overflow-hidden flex flex-col divide-y divide-neutral-800 text-white">
           <button
-            onClick={resetNorth}
-            title="Reset North"
-            className="p-2.5 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex items-center justify-center group"
+            onClick={() => {
+              if (leafletMapRef.current) {
+                leafletMapRef.current.flyTo([23.0, 80.5], 5, { duration: 1.0 });
+              }
+            }}
+            title="Reset to All India"
+            className="p-2.5 hover:bg-neutral-800 transition flex items-center justify-center group"
           >
-            <Compass 
-              className="w-4 h-4 text-neutral-800 dark:text-neutral-200 group-hover:scale-110 transition-transform" 
-              style={{ transform: `rotate(${-currentBearing}deg)` }}
-            />
+            <Compass className="w-4 h-4 text-sky-400 group-hover:scale-110 transition-transform" />
           </button>
 
           <button
-            onClick={() => setShowAngleSlider(!showAngleSlider)}
-            title="Toggle 3D Angle Panel"
-            className={`p-2 font-mono font-bold text-xs hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex items-center justify-center ${
-              showAngleSlider ? 'text-black dark:text-white underline font-bold' : 'text-neutral-500'
-            }`}
-          >
-            {currentPitch}°
-          </button>
-
-          <button
-            onClick={() => adjustPitchStep(10)}
-            title="Tilt Up +10°"
-            className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex items-center justify-center text-neutral-700 dark:text-neutral-300"
-          >
-            <ChevronUp className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => adjustPitchStep(-10)}
-            title="Tilt Down -10°"
-            className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex items-center justify-center text-neutral-700 dark:text-neutral-300"
-          >
-            <ChevronDown className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={zoomIn}
-            title="Zoom in"
-            className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex items-center justify-center"
+            onClick={() => {
+              if (leafletMapRef.current) leafletMapRef.current.zoomIn();
+            }}
+            title="Zoom In"
+            className="p-2.5 hover:bg-neutral-800 transition flex items-center justify-center"
           >
             <Plus className="w-4 h-4" />
           </button>
 
           <button
-            onClick={zoomOut}
-            title="Zoom out"
-            className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition flex items-center justify-center"
+            onClick={() => {
+              if (leafletMapRef.current) leafletMapRef.current.zoomOut();
+            }}
+            title="Zoom Out"
+            className="p-2.5 hover:bg-neutral-800 transition flex items-center justify-center"
           >
             <Minus className="w-4 h-4" />
           </button>
@@ -1103,9 +754,9 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
           <button
             onClick={onTriggerLocate}
             title="Center on My Location"
-            className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-900 text-neutral-800 dark:text-neutral-200 transition flex items-center justify-center"
+            className="p-2.5 hover:bg-neutral-800 text-white transition flex items-center justify-center"
           >
-            <Crosshair className={`w-4 h-4 ${isLocating ? 'animate-spin' : ''}`} />
+            <Crosshair className={`w-4 h-4 ${isLocating ? 'animate-spin text-sky-400' : ''}`} />
           </button>
         </div>
       </div>

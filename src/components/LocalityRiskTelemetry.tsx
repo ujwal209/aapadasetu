@@ -33,7 +33,7 @@ export interface LocalityRiskData {
     humidity_pct: number;
   };
   irregularities: Array<{
-    type: 'FLOOD' | 'SEISMIC' | 'WIND' | 'HEAT' | 'NORMAL';
+    type: 'FLOOD' | 'SEISMIC' | 'WIND' | 'HEAT' | 'NORMAL' | 'CYCLONE' | 'FIRE' | 'TSUNAMI';
     severity: 'CRITICAL' | 'WARNING' | 'STABLE';
     title: string;
     description: string;
