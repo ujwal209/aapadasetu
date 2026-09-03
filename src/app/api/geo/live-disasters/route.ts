@@ -30,6 +30,114 @@ function isIndianCoordinates(lat: number, lon: number): boolean {
   return lat >= 6.0 && lat <= 38.0 && lon >= 68.0 && lon <= 98.0;
 }
 
+const SPECIFIC_ZONES: Record<string, { place: string; lat: number; lon: number }> = {
+  'darjeeling': { place: 'Darjeeling, West Bengal', lat: 27.0410, lon: 88.2663 },
+  'kalimpong': { place: 'Kalimpong, West Bengal', lat: 27.0667, lon: 88.4667 },
+  'jalpaiguri': { place: 'Jalpaiguri, West Bengal', lat: 26.5404, lon: 88.7196 },
+  'siliguri': { place: 'Siliguri, West Bengal', lat: 26.7271, lon: 88.3953 },
+  'wayanad': { place: 'Wayanad, Kerala', lat: 11.6854, lon: 76.1320 },
+  'idukki': { place: 'Idukki, Kerala', lat: 9.8494, lon: 76.9806 },
+  'munnar': { place: 'Munnar, Kerala', lat: 10.0889, lon: 77.0595 },
+  'pathanamthitta': { place: 'Pathanamthitta, Kerala', lat: 9.2648, lon: 76.7870 },
+  'shimla': { place: 'Shimla, Himachal Pradesh', lat: 31.1048, lon: 77.1734 },
+  'kullu': { place: 'Kullu, Himachal Pradesh', lat: 31.9579, lon: 77.1095 },
+  'mandi': { place: 'Mandi, Himachal Pradesh', lat: 31.7087, lon: 76.9320 },
+  'manali': { place: 'Manali, Himachal Pradesh', lat: 32.2432, lon: 77.1892 },
+  'kangra': { place: 'Kangra, Himachal Pradesh', lat: 32.0998, lon: 76.2691 },
+  'chamoli': { place: 'Chamoli, Uttarakhand', lat: 30.4227, lon: 79.3243 },
+  'kedarnath': { place: 'Kedarnath, Uttarakhand', lat: 30.7352, lon: 79.0669 },
+  'badrinath': { place: 'Badrinath, Uttarakhand', lat: 30.7433, lon: 79.4938 },
+  'uttarkashi': { place: 'Uttarkashi, Uttarakhand', lat: 30.7268, lon: 78.4354 },
+  'rudraprayag': { place: 'Rudraprayag, Uttarakhand', lat: 30.2844, lon: 78.9811 },
+  'dehradun': { place: 'Dehradun, Uttarakhand', lat: 30.3165, lon: 78.0322 },
+  'nainital': { place: 'Nainital, Uttarakhand', lat: 29.3919, lon: 79.4542 },
+  'bhimtal': { place: 'Bhimtal, Uttarakhand', lat: 29.3496, lon: 79.5539 },
+  'joshimath': { place: 'Joshimath, Uttarakhand', lat: 30.5574, lon: 79.5663 },
+  'guwahati': { place: 'Guwahati, Assam', lat: 26.1445, lon: 91.7362 },
+  'silchar': { place: 'Silchar, Assam', lat: 24.8333, lon: 92.7789 },
+  'dhubri': { place: 'Dhubri, Assam', lat: 26.0207, lon: 89.9749 },
+  'dibrugarh': { place: 'Dibrugarh, Assam', lat: 27.4728, lon: 94.9120 },
+  'kaziranga': { place: 'Kaziranga, Assam', lat: 26.5775, lon: 93.1711 },
+  'patna': { place: 'Patna, Bihar', lat: 25.5941, lon: 85.1376 },
+  'darbhanga': { place: 'Darbhanga, Bihar', lat: 26.1542, lon: 85.8918 },
+  'katihar': { place: 'Katihar, Bihar', lat: 25.5434, lon: 87.5684 },
+  'bhagalpur': { place: 'Bhagalpur, Bihar', lat: 25.2425, lon: 86.9842 },
+  'purnia': { place: 'Purnia, Bihar', lat: 25.7771, lon: 87.4753 },
+  'cuttack': { place: 'Cuttack, Odisha', lat: 20.4625, lon: 85.8828 },
+  'puri': { place: 'Puri, Odisha', lat: 19.8135, lon: 85.8312 },
+  'bhubaneswar': { place: 'Bhubaneswar, Odisha', lat: 20.2961, lon: 85.8245 },
+  'kendrapara': { place: 'Kendrapara, Odisha', lat: 20.5015, lon: 86.4222 },
+  'balasore': { place: 'Balasore, Odisha', lat: 21.4934, lon: 86.9135 },
+  'vadodara': { place: 'Vadodara, Gujarat', lat: 22.3072, lon: 73.1812 },
+  'surat': { place: 'Surat, Gujarat', lat: 21.1702, lon: 72.8311 },
+  'ahmedabad': { place: 'Ahmedabad, Gujarat', lat: 23.0225, lon: 72.5714 },
+  'rajkot': { place: 'Rajkot, Gujarat', lat: 22.3039, lon: 70.8022 },
+  'bharuch': { place: 'Bharuch, Gujarat', lat: 21.7051, lon: 72.9959 },
+  'mumbai': { place: 'Mumbai, Maharashtra', lat: 19.0760, lon: 72.8777 },
+  'pune': { place: 'Pune, Maharashtra', lat: 18.5204, lon: 73.8567 },
+  'thane': { place: 'Thane, Maharashtra', lat: 19.2183, lon: 72.9781 },
+  'raigad': { place: 'Raigad, Maharashtra', lat: 18.5158, lon: 73.1822 },
+  'ratnagiri': { place: 'Ratnagiri, Maharashtra', lat: 16.9902, lon: 73.3120 },
+  'kolhapur': { place: 'Kolhapur, Maharashtra', lat: 16.7050, lon: 74.2433 },
+  'chennai': { place: 'Chennai, Tamil Nadu', lat: 13.0827, lon: 80.2707 },
+  'thoothukudi': { place: 'Thoothukudi, Tamil Nadu', lat: 8.7642, lon: 78.1348 },
+  'tirunelveli': { place: 'Tirunelveli, Tamil Nadu', lat: 8.7139, lon: 77.7567 },
+  'cuddalore': { place: 'Cuddalore, Tamil Nadu', lat: 11.7480, lon: 79.7714 },
+  'vijayawada': { place: 'Vijayawada, Andhra Pradesh', lat: 16.5062, lon: 80.6480 },
+  'srikakulam': { place: 'Srikakulam, Andhra Pradesh', lat: 18.2949, lon: 83.8938 },
+  'visakhapatnam': { place: 'Visakhapatnam, Andhra Pradesh', lat: 17.6868, lon: 83.2185 },
+  'nellore': { place: 'Nellore, Andhra Pradesh', lat: 14.4426, lon: 79.9865 },
+  'ranchi': { place: 'Ranchi, Jharkhand', lat: 23.3441, lon: 85.3096 },
+  'jamshedpur': { place: 'Jamshedpur, Jharkhand', lat: 22.8046, lon: 86.2029 },
+  'dhanbad': { place: 'Dhanbad, Jharkhand', lat: 23.7957, lon: 86.4304 },
+  'delhi': { place: 'Delhi NCR', lat: 28.6139, lon: 77.2090 },
+  'bengaluru': { place: 'Bengaluru, Karnataka', lat: 12.9716, lon: 77.5946 },
+  'mangaluru': { place: 'Mangaluru, Karnataka', lat: 12.9141, lon: 74.8560 },
+  'udupi': { place: 'Udupi, Karnataka', lat: 13.3409, lon: 74.7421 },
+  'kathmandu': { place: 'Kathmandu Valley, Nepal', lat: 27.7172, lon: 85.3240 },
+  'pokhara': { place: 'Pokhara, Nepal', lat: 28.2096, lon: 83.9856 },
+  'chitwan': { place: 'Chitwan, Nepal', lat: 27.5291, lon: 84.3542 },
+  'sindhupalchok': { place: 'Sindhupalchok, Nepal', lat: 27.9506, lon: 85.6841 },
+  'melamchi': { place: 'Melamchi, Nepal', lat: 27.8306, lon: 85.5800 },
+  'biratnagar': { place: 'Biratnagar, Koshi, Nepal', lat: 26.4525, lon: 87.2718 },
+  'lalitpur': { place: 'Lalitpur, Nepal', lat: 27.6644, lon: 85.3188 },
+  'bhaktapur': { place: 'Bhaktapur, Nepal', lat: 27.6710, lon: 85.4298 },
+};
+
+function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function resolveSpecificPlace(lat: number, lon: number, country?: string, rawTitle?: string): string {
+  const combined = `${rawTitle || ''} ${country || ''}`.toLowerCase();
+  for (const [key, zone] of Object.entries(SPECIFIC_ZONES)) {
+    if (combined.includes(key)) {
+      return zone.place;
+    }
+  }
+
+  let closest: string | null = null;
+  let minD = 140;
+  for (const zone of Object.values(SPECIFIC_ZONES)) {
+    const d = getDistanceKm(lat, lon, zone.lat, zone.lon);
+    if (d < minD) {
+      minD = d;
+      closest = zone.place;
+    }
+  }
+  if (closest) return closest;
+
+  if (country === 'Nepal') return 'Himalayan Foothills, Nepal';
+  if (country === 'India') return 'Indo-Gangetic Basin, India';
+  return country || 'Active Hazard Sector';
+}
+
 export async function GET(req: Request) {
   const now = Date.now();
   if (cachedDisasters.length > 0 && now - lastFetchedTime < CACHE_TTL_MS) {
@@ -76,10 +184,11 @@ export async function GET(req: Request) {
 
         if (!seenIds.has(id)) {
           seenIds.add(id);
+          const resolvedPlace = resolveSpecificPlace(lat, lon, p.country, p.name || p.htmldescription);
           results.push({
             id,
             title: p.name || p.htmldescription || `${dType} Alert`,
-            place: p.country || 'Global Disaster Zone',
+            place: resolvedPlace,
             disaster_type: dType,
             severity: alertLevel === 'red' ? 'CRITICAL' : alertLevel === 'orange' ? 'SEVERE' : 'MODERATE',
             risk_score: score,
@@ -282,51 +391,41 @@ export async function GET(req: Request) {
         else if (lower.includes('landslide')) dType = 'FLOOD';
         else if (lower.includes('fire')) dType = 'FIRE';
 
-        // Extract district/state if present
-        const states = [
-          'Himachal Pradesh',
-          'Uttarakhand',
-          'Kerala',
-          'Assam',
-          'Odisha',
-          'Gujarat',
-          'Maharashtra',
-          'Bihar',
-          'West Bengal',
-          'Tamil Nadu',
-        ];
-        let matchedState = 'India';
-        for (const s of states) {
-          if (cleanTitle.toLowerCase().includes(s.toLowerCase())) {
-            matchedState = s;
+        // Detect specific district/region. If generic whole country with nothing specific, SKIP it completely!
+        let detectedZone: { place: string; lat: number; lon: number } | null = null;
+        for (const [key, zone] of Object.entries(SPECIFIC_ZONES)) {
+          if (lower.includes(key)) {
+            detectedZone = zone;
             break;
           }
         }
 
-        const coords = await geocodePlace(`${matchedState}, India`);
-        if (coords) {
-          const id = `IMD-ALERT-${Math.abs(cleanTitle.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0))}`;
-          if (!seenIds.has(id)) {
-            seenIds.add(id);
-            results.push({
-              id,
-              title: cleanTitle,
-              place: `${matchedState}, India`,
-              disaster_type: dType,
-              severity: lower.includes('red alert') || lower.includes('extremely heavy') ? 'CRITICAL' : 'SEVERE',
-              risk_score: lower.includes('red alert') ? 85 : 68,
-              longitude: coords[0],
-              latitude: coords[1],
-              depth_km: 0,
-              radius_km: 70,
-              source: 'India Meteorological Department (IMD Bulletin)',
-              url: linkMatch ? linkMatch[1] : 'https://mausam.imd.gov.in',
-              timestamp: pubDateMatch ? new Date(pubDateMatch[1]).toISOString() : new Date().toISOString(),
-              is_verified: true,
-              is_india: true,
-              country: 'India',
-            });
-          }
+        // STRICT SPECIFICITY FILTER: Do not plot generic whole-country pins like "India, India" or "Nepal"
+        if (!detectedZone) {
+          continue;
+        }
+
+        const id = `IMD-ALERT-${Math.abs(cleanTitle.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0))}`;
+        if (!seenIds.has(id)) {
+          seenIds.add(id);
+          results.push({
+            id,
+            title: cleanTitle,
+            place: detectedZone.place,
+            disaster_type: dType,
+            severity: lower.includes('red alert') || lower.includes('extremely heavy') ? 'CRITICAL' : 'SEVERE',
+            risk_score: lower.includes('red alert') ? 85 : 68,
+            longitude: detectedZone.lon,
+            latitude: detectedZone.lat,
+            depth_km: 0,
+            radius_km: 50,
+            source: 'India Meteorological Department (IMD Bulletin)',
+            url: linkMatch ? linkMatch[1] : 'https://mausam.imd.gov.in',
+            timestamp: pubDateMatch ? new Date(pubDateMatch[1]).toISOString() : new Date().toISOString(),
+            is_verified: true,
+            is_india: true,
+            country: 'India',
+          });
         }
       }
     }

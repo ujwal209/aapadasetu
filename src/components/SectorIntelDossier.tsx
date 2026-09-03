@@ -365,7 +365,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
               ) : (
                 <>
                   <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest block font-semibold">
-                    Metropolitan Sector
+                    Target Location
                   </span>
                   <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5">
                     {parentCity || "Sector Area"}

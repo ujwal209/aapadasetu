@@ -630,14 +630,20 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
       const iconSvg = getDisasterSvg(d.disaster_type);
       const color = getDisasterColor(d.disaster_type);
 
+      const cleanPlace = (d.place || '').replace(/,\s*(India|Global)$/i, '').trim();
+      const displayLocation = cleanPlace || d.place || d.title;
+
       el.innerHTML = `
         <!-- Floating Tooltip on Hover Only (Zero Label Collision) -->
-        <div class="absolute bottom-8 hidden group-hover:flex items-center space-x-1.5 bg-black text-white dark:bg-white dark:text-black font-semibold text-[10px] px-3 py-1 rounded-full shadow-2xl border border-neutral-700 dark:border-neutral-300 z-40 whitespace-nowrap pointer-events-none">
-          <span style="background-color: ${color.ping};" class="w-1.5 h-1.5 rounded-full animate-ping"></span>
-          <span>${d.disaster_type}: ${d.place.split(' - ')[0].split(',')[0]}</span>
+        <div class="absolute bottom-9 hidden group-hover:flex items-center space-x-2 bg-black/95 text-white dark:bg-white/95 dark:text-black font-sans text-[11px] px-3 py-1.5 rounded-lg shadow-2xl border border-neutral-700/60 dark:border-neutral-300/60 z-40 whitespace-nowrap pointer-events-none backdrop-blur-md">
+          <span style="background-color: ${color.ping};" class="w-2 h-2 rounded-full animate-ping flex-shrink-0"></span>
+          <div class="flex flex-col text-left">
+            <span class="font-mono uppercase tracking-wider text-[9px] text-neutral-400 dark:text-neutral-500 font-bold">${d.disaster_type} • ${d.severity || 'ALERT'}</span>
+            <span class="font-semibold leading-tight">${displayLocation}</span>
+          </div>
         </div>
         <!-- Monochrome Pill Shell with Hazard-Colored Icon Inside -->
-        <div style="width: 26px; height: 26px; min-width: 26px; min-height: 26px; color: ${color.hex};" class="rounded-full bg-white dark:bg-black flex items-center justify-center border-2 border-white dark:border-neutral-800 shadow-md transition-transform duration-200 transform group-hover:scale-125 z-20">
+        <div style="width: 28px; height: 28px; min-width: 28px; min-height: 28px; color: ${color.hex};" class="rounded-full bg-white dark:bg-black flex items-center justify-center border-2 border-white dark:border-neutral-800 shadow-md transition-transform duration-200 transform group-hover:scale-125 z-20">
           ${iconSvg}
         </div>
       `;
