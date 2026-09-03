@@ -19,6 +19,7 @@ import {
 import { LiveEarthquake, ReliefShelter, LiveDisaster } from '../types';
 import { api } from '../lib/api';
 import { InspectItem } from './PlaceDetailCard';
+import { REAL_CITIES } from '../data/real-cities';
 
 interface GlobeViewer3DProps {
   earthquakes: LiveEarthquake[];
@@ -50,6 +51,7 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
   const searchMarkerRef = useRef<maplibregl.Marker | null>(null);
   const shelterMarkersRef = useRef<maplibregl.Marker[]>([]);
   const disasterMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const cityMarkersRef = useRef<maplibregl.Marker[]>([]);
 
   // Camera State
   const [currentPitch, setCurrentPitch] = useState<number>(0);
@@ -188,9 +190,52 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
         renderEarthquakeLayers(map, earthquakes);
         renderDisasterMarkers(map, disasters);
         embedShelterPlaces(map, shelters);
+        renderCityMarkers(map);
 
         if (selectedCoordinates) {
           flyToCoordinates(selectedCoordinates.lon, selectedCoordinates.lat, selectedCoordinates.zoom || 13);
+        }
+      });
+
+      // Map Canvas Click Handler: Clicking ANY place on Earth inspects it like Google Maps
+      map.on('click', async (e) => {
+        // Prevent click if clicking on an interactive quake or disaster layer
+        const bbox: [maplibregl.PointLike, maplibregl.PointLike] = [
+          [e.point.x - 8, e.point.y - 8],
+          [e.point.x + 8, e.point.y + 8],
+        ];
+        const features = map.queryRenderedFeatures(bbox, {
+          layers: ['quake-points', 'disaster-glow'].filter((l) => map.getLayer(l))
+        });
+        if (features && features.length > 0) return;
+
+        const lat = e.lngLat.lat;
+        const lon = e.lngLat.lng;
+
+        try {
+          const geo = await api.reverseGeocode(lat, lon);
+          const parentCity = (geo as any).parent_city || geo.city || geo.district || geo.locality || 'Target Location';
+          const locality = geo.locality || parentCity;
+          onInspectItem({
+            type: 'PLACE',
+            name: parentCity,
+            parentCity: parentCity,
+            locality: locality,
+            lat,
+            lon,
+            displayName: geo.display_name || `${parentCity} (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)`,
+          } as any);
+          flyToCoordinates(lon, lat, Math.max(map.getZoom(), 11), currentPitch || 45);
+        } catch {
+          onInspectItem({
+            type: 'PLACE',
+            name: 'Target Location',
+            parentCity: 'Target Location',
+            lat,
+            lon,
+            displayName: `Coordinates: ${lat.toFixed(2)}°, ${lon.toFixed(2)}°`,
+          } as any);
+          flyToCoordinates(lon, lat, Math.max(map.getZoom(), 11), currentPitch || 45);
         }
       });
 
@@ -232,6 +277,7 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
       renderEarthquakeLayers(map, earthquakes);
       renderDisasterMarkers(map, disasters);
       embedShelterPlaces(map, shelters);
+      renderCityMarkers(map);
     });
   }, [basemap, terrainEnabled]);
 
@@ -516,6 +562,43 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
       default:
         return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
     }
+  };
+
+  // Render Clickable City Labels on Globe
+  const renderCityMarkers = (map: maplibregl.Map) => {
+    cityMarkersRef.current.forEach((m) => m.remove());
+    cityMarkersRef.current = [];
+
+    REAL_CITIES.forEach((c) => {
+      const el = document.createElement('div');
+      el.className = 'group flex items-center space-x-1.5 cursor-pointer select-none transition-transform duration-150 hover:scale-110';
+      el.innerHTML = `
+        <div class="w-2 h-2 rounded-full bg-white dark:bg-black border border-neutral-900 dark:border-neutral-100 shadow-xs group-hover:bg-blue-600 transition"></div>
+        <span class="text-[10px] font-semibold text-neutral-800 dark:text-neutral-200 px-1.5 py-0.5 rounded-md bg-white/90 dark:bg-black/90 backdrop-blur-xs border border-neutral-300 dark:border-neutral-700 shadow-xs group-hover:border-neutral-900 dark:group-hover:border-neutral-100 transition">
+          ${c.name}
+        </span>
+      `;
+
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onInspectItem({
+          type: 'PLACE',
+          name: c.name,
+          parentCity: c.name,
+          locality: c.name,
+          lat: c.latitude,
+          lon: c.longitude,
+          displayName: `${c.name}, ${c.state ? c.state + ', ' : ''}${c.country}`,
+        } as any);
+        flyToCoordinates(c.longitude, c.latitude, 11, currentPitch || 45);
+      });
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([c.longitude, c.latitude])
+        .addTo(map);
+
+      cityMarkersRef.current.push(marker);
+    });
   };
 
   const renderDisasterMarkers = (map: maplibregl.Map, list: LiveDisaster[]) => {

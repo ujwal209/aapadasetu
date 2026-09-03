@@ -512,12 +512,13 @@ export default function DisasterCommandPage() {
               <SectorIntelDossier
                 item={inspectedItem}
                 currentSector={{
-                  name: targetCoords?.name || (inspectedItem as any)?.parentCity || userLocation?.locality || "Active Sector",
-                  locality: (inspectedItem as any)?.parentCity || targetCoords?.name || userLocation?.locality || "Active Sector",
-                  parentCity: (inspectedItem as any)?.parentCity || targetCoords?.name || userLocation?.parentCity,
+                  name: (inspectedItem as any)?.parentCity || targetCoords?.name || userLocation?.parentCity || "Active Sector",
+                  locality: (inspectedItem as any)?.locality || userLocation?.locality || targetCoords?.name || "Active Sector",
+                  parentCity: (inspectedItem as any)?.parentCity || userLocation?.parentCity || targetCoords?.name || "Active Sector",
                   lat: activeCoordinates.lat,
                   lon: activeCoordinates.lon,
                 }}
+                disasters={liveDisasters}
                 onFlyTo={(lat, lon, zoom = 14) => setTargetCoords({ lat, lon, zoom })}
                 onTriggerSos={() => setActiveTab('sos')}
                 onRiskAssessmentUpdated={(data) => {

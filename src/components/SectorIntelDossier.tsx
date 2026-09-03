@@ -17,11 +17,14 @@ import {
   ChevronDown, 
   Radar, 
   Crosshair, 
-  Radio
+  Radio,
+  MapPin
 } from 'lucide-react';
 import { InspectItem } from './PlaceDetailCard';
 import { SectorRiskScoreCard } from './SectorRiskScoreCard';
+import { GoogleMapsPlaceView } from './GoogleMapsPlaceView';
 import { api } from '../lib/api';
+import { LiveDisaster } from '../types';
 
 interface SectorCacheData {
   images: string[];
@@ -69,6 +72,7 @@ interface SectorIntelDossierProps {
   onTriggerSos: () => void;
   onClose?: () => void;
   onRiskAssessmentUpdated?: (data: any) => void;
+  disasters?: LiveDisaster[];
 }
 
 export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
@@ -78,9 +82,10 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
   onTriggerSos,
   onClose,
   onRiskAssessmentUpdated,
+  disasters = [],
 }) => {
-  // 1. Briefing is the default first tab
-  const [activeDossierTab, setActiveDossierTab] = useState<'ai' | 'wire' | 'risk' | 'radar' | 'relief'>('ai');
+  // 1. Google Maps Place Overview is the primary first tab
+  const [activeDossierTab, setActiveDossierTab] = useState<'place' | 'wire' | 'ai' | 'relief'>('place');
 
   const [articles, setArticles] = useState<Array<{
     title: string;
@@ -106,6 +111,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
   } | null>(null);
   const [isLoadingRelief, setIsLoadingRelief] = useState<boolean>(false);
   const [visibleWireCount, setVisibleWireCount] = useState<number>(8);
+  const images = useMemo(() => articles.map((a) => a.image).filter((img): img is string => Boolean(img)), [articles]);
 
   // Dynamic 20km Risk Data
   const [riskAssessment, setRiskAssessment] = useState<{
@@ -178,6 +184,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
     : currentSector?.lon ?? 78.9629
     : currentSector?.lon ?? 78.9629;
 
+  const locality = (item as any)?.locality || currentSector?.locality || rawName;
   const isHazard = item?.type === 'DISASTER' || item?.type === 'QUAKE';
   const hazardId = item?.type === 'DISASTER' ? item.data.id : item?.type === 'QUAKE' ? item.data.id : '';
   const cacheKey = `${isHazard ? hazardId : (parentCity || 'india').toLowerCase().trim()}_${lat.toFixed(2)}_${lon.toFixed(2)}`;
@@ -407,14 +414,13 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
         </div>
       </div>
 
-      {/* 2. Enterprise Segmented Sub-Tab Bar (AI Briefing is FIRST TAB) */}
-      <div className="grid grid-cols-5 p-1 bg-neutral-100 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg gap-1 flex-shrink-0">
+      {/* 2. Enterprise Segmented Sub-Tab Bar (Google Maps Overview is FIRST TAB) */}
+      <div className="grid grid-cols-4 p-1 bg-neutral-100 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg gap-1 flex-shrink-0">
         {[
+          { id: 'place', label: 'Overview', fullLabel: 'Place Photos, Weather & Temperature Graph', icon: MapPin },
+          { id: 'wire', label: 'News Wire', fullLabel: 'Live Verified News (Past 7 Days)', icon: Newspaper },
           { id: 'ai', label: 'Briefing', fullLabel: 'Situation Briefing', icon: FileText },
-          { id: 'wire', label: 'Wire', fullLabel: 'Field Wire (Past 7 Days)', icon: Newspaper },
-          { id: 'risk', label: 'Matrix', fullLabel: 'Threat Risk Matrix', icon: Activity },
-          { id: 'radar', label: 'Radar', fullLabel: 'Surveillance & Sensors', icon: Radar },
-          { id: 'relief', label: 'Aid', fullLabel: 'Ground Relief Hubs', icon: Home },
+          { id: 'relief', label: 'Shelters', fullLabel: 'Nearest Relief Camps & Safe Shelters', icon: Home },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeDossierTab === tab.id;
@@ -436,7 +442,24 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
         })}
       </div>
 
-      {/* 3. VIEW 1: SITUATION BRIEFING (Primary First Tab, No Tech Stack Badges) */}
+      {/* 3. VIEW 1: GOOGLE MAPS PLACE OVERVIEW (Photos, Weather, Rain Chance, 6-Day Temperature Graph, Nearby Alerts) */}
+      {activeDossierTab === 'place' && (
+        <GoogleMapsPlaceView
+          placeName={rawName}
+          parentCity={parentCity}
+          locality={locality}
+          resolvedLocation={resolvedLocation}
+          lat={lat}
+          lon={lon}
+          onFlyTo={onFlyTo}
+          onTriggerSos={onTriggerSos}
+          nearbyDisasters={disasters}
+          photos={images}
+          reliefCamps={reliefData?.camps}
+        />
+      )}
+
+      {/* 4. VIEW 2: SITUATION BRIEFING */}
       {activeDossierTab === 'ai' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between pb-1 border-b border-neutral-200 dark:border-neutral-800 text-[11px]">

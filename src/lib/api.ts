@@ -871,5 +871,43 @@ export const api = {
         { service: "Police Emergency Network", number: "112" }
       ]
     };
+  },
+
+  // 13. Weather & 6-Day Temperature History via Open-Meteo
+  async getPlaceWeatherAndHistory(lat: number, lon: number) {
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max&past_days=6&forecast_days=1&timezone=auto`;
+      const res = await fetch(url);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Weather fetch error:', e);
+    }
+    return null;
+  },
+
+  // 14. Place Photo & Friendly Overview via Wikipedia
+  async getPlaceWikiSummaryAndPhoto(placeName: string) {
+    try {
+      const clean = placeName.split(',')[0].replace(/District/i, '').trim();
+      const url = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(clean)}&prop=pageimages|extracts&exintro=1&explaintext=1&exsentences=3&pithumbsize=1000&format=json&origin=*`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const pages = data.query?.pages || {};
+        const page: any = Object.values(pages)[0];
+        if (page && page.pageid && page.pageid > 0) {
+          return {
+            title: page.title,
+            summary: page.extract || null,
+            photoUrl: page.thumbnail?.source || null,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Wiki place fetch error:', e);
+    }
+    return null;
   }
 };
