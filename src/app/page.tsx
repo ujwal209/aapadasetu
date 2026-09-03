@@ -109,6 +109,7 @@ export default function DisasterCommandPage() {
       zoom: zone.zoom,
       name: zone.name,
     });
+    fetch20kmRiskAssessment(zone.center[1], zone.center[0]);
 
     // Trigger on-demand sector-wise intelligence search
     try {
@@ -254,8 +255,8 @@ export default function DisasterCommandPage() {
     api.getResources().then((data) => setResources(data));
     api.getStats().then((data) => setStats(data));
 
-    // Baseline multi-hazard risk assessment across India (no camera auto-zoom)
-    fetch20kmRiskAssessment(20.5937, 78.9629);
+    // Baseline multi-hazard risk assessment for initial Himalayan sector (no camera auto-zoom)
+    fetch20kmRiskAssessment(33.2, 77.2);
   }, []);
 
   // 2. Geolocation Acquisition & 20km Perimeter Risk Assessment
@@ -541,6 +542,7 @@ export default function DisasterCommandPage() {
                   const score = localityRiskData.overallRiskScore;
                   const level = localityRiskData.overallRiskLevel;
                   const isCrit = level === 'CRITICAL';
+                  const isHigh = level === 'HIGH';
                   
                   return (
                     <button
@@ -548,11 +550,13 @@ export default function DisasterCommandPage() {
                       className={`flex items-center space-x-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold border transition ml-1 cursor-pointer flex-shrink-0 ${
                         isCrit
                           ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 shadow-xs'
+                          : isHigh
+                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 shadow-xs'
                           : 'bg-neutral-100 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 border-neutral-200 dark:border-neutral-800'
                       }`}
                       title="View dynamic multi-hazard risk assessment"
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full ${isCrit ? 'bg-rose-400 animate-ping' : 'bg-neutral-900 dark:bg-white'}`}></span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isCrit ? 'bg-rose-500 animate-ping' : isHigh ? 'bg-amber-500' : 'bg-neutral-900 dark:bg-white'}`}></span>
                       <span className="opacity-60 text-[10px]">RISK</span>
                       <span>{score}</span>
                       <span className="text-[9px] uppercase tracking-wider font-semibold">({level})</span>

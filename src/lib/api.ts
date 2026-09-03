@@ -552,12 +552,43 @@ export const api = {
       description: string;
     }> = [];
 
-    // Dynamic coordinate-specific baseline variance
-    const coordVariance = Math.abs(Math.sin(lat * 12.345 + lon * 67.89)) * 18;
-    let riskPoints = Math.round(12 + coordVariance);
+    // 0. Terrain & Tectonic Sector Baseline Vulnerability
+    const zone = getDisasterZoneForCoords(lat, lon);
+    let baseVulnerability = 16;
+    if (zone.id === 'ZONE-1-HIMALAYAN') {
+      // Northern Himalayas & Karakoram: Active Tectonic, Glacial Lake Outburst, Debris Avalanches
+      baseVulnerability = 42;
+      irregularities.push({
+        type: 'SEISMIC',
+        severity: 'WARNING',
+        title: 'Himalayan High-Altitude Hazard Sector',
+        description: 'Tectonic active fault zone subject to cloudburst surges, glacial lake outburst (GLOF), and steep slope failures.',
+      });
+    } else if (zone.id === 'ZONE-2-NORTHEAST') {
+      // Northeast & Brahmaputra: Seismic Zone V and extreme flood channel
+      baseVulnerability = 40;
+      irregularities.push({
+        type: 'FLOOD',
+        severity: 'WARNING',
+        title: 'Brahmaputra Severe Inundation Corridor',
+        description: 'Seismic Zone V corridor with recurring monsoon deluges and major trans-boundary river swells.',
+      });
+    } else if (zone.id === 'ZONE-3-GANGETIC_NEPAL') {
+      baseVulnerability = 34;
+      irregularities.push({
+        type: 'FLOOD',
+        severity: 'WARNING',
+        title: 'Gangetic Plains & Nepal Sunkoshi Basin',
+        description: 'Trans-boundary Himalayan runoff convergence and high flood siltation vulnerability.',
+      });
+    } else if (zone.id === 'ZONE-4-WESTERN_GHATS') {
+      baseVulnerability = 30;
+    }
+
+    let riskPoints = baseVulnerability;
 
     // 1. Flash Flood & Precipitation Irregularity Check
-    if (weather.precipitation_mm >= 15.0) {
+    if (weather.precipitation_mm >= 10.0) {
       riskPoints += 45;
       irregularities.push({
         type: 'FLOOD',
@@ -565,7 +596,7 @@ export const api = {
         title: 'Severe Flash Flood Hazard',
         description: `Extreme precipitation (${weather.precipitation_mm.toFixed(1)} mm) detected within 20km. Imminent runoff, stormwater overload, and low-lying ground saturation.`,
       });
-    } else if (weather.precipitation_mm >= 5.0) {
+    } else if (weather.precipitation_mm >= 3.0) {
       riskPoints += 25;
       irregularities.push({
         type: 'FLOOD',
@@ -573,8 +604,8 @@ export const api = {
         title: 'Elevated Surface Inundation Risk',
         description: `Active rainfall of ${weather.precipitation_mm.toFixed(1)} mm within the 20km sector. Localized drainage blockages and waterlogging likely.`,
       });
-    } else if (weather.precipitation_mm > 0.5) {
-      riskPoints += 10;
+    } else if (weather.precipitation_mm > 0.3) {
+      riskPoints += 8;
       irregularities.push({
         type: 'FLOOD',
         severity: 'STABLE',
@@ -584,7 +615,7 @@ export const api = {
     }
 
     // 2. High Wind / Gale Irregularity Check
-    if (weather.wind_speed_kmh >= 50.0 || weather.wind_gusts_kmh >= 70.0) {
+    if (weather.wind_speed_kmh >= 45.0 || weather.wind_gusts_kmh >= 65.0) {
       riskPoints += 35;
       irregularities.push({
         type: 'WIND',
@@ -592,7 +623,7 @@ export const api = {
         title: 'Gale Force Wind Irregularity',
         description: `Dangerous wind velocity (${weather.wind_speed_kmh.toFixed(1)} km/h, gusts ${weather.wind_gusts_kmh.toFixed(1)} km/h). Structural and powerline vulnerability.`,
       });
-    } else if (weather.wind_speed_kmh >= 30.0) {
+    } else if (weather.wind_speed_kmh >= 28.0) {
       riskPoints += 15;
       irregularities.push({
         type: 'WIND',
@@ -640,7 +671,7 @@ export const api = {
     });
 
     if (nearestQuake) {
-      if (nearestQuake.distanceKm <= 50) {
+      if (nearestQuake.distanceKm <= 80) {
         riskPoints += 45;
         irregularities.push({
           type: 'SEISMIC',
@@ -648,8 +679,8 @@ export const api = {
           title: 'Immediate Seismic Proximity Alert',
           description: `M${nearestQuake.magnitude.toFixed(1)} earthquake recorded within ${nearestQuake.distanceKm} km (${nearestQuake.place}). Structural survey advised.`,
         });
-      } else if (nearestQuake.distanceKm <= 200) {
-        riskPoints += 20;
+      } else if (nearestQuake.distanceKm <= 250) {
+        riskPoints += 22;
         irregularities.push({
           type: 'SEISMIC',
           severity: 'WARNING',
@@ -659,10 +690,8 @@ export const api = {
       }
     }
 
-    // 5. Check Nearby Multi-Hazard Disasters (GDACS floods, cyclones, NASA events)
-    let nearestDisaster: any = null;
-    let minDisasterDist = Infinity;
-
+    // 5. Multi-Hazard Proximity & Sector Density Check
+    const nearbyDisasters: any[] = [];
     allDisasters.forEach((d) => {
       const dLat = ((d.latitude - lat) * Math.PI) / 180;
       const dLon = ((d.longitude - lon) * Math.PI) / 180;
@@ -675,21 +704,37 @@ export const api = {
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       const dist = Math.round(6371 * c);
 
-      if (dist < minDisasterDist) {
-        minDisasterDist = dist;
-        nearestDisaster = { ...d, distanceKm: dist };
+      if (dist <= 250) {
+        nearbyDisasters.push({ ...d, distanceKm: dist });
       }
     });
 
-    if (nearestDisaster && nearestDisaster.distanceKm <= 150) {
-      const isCritical = nearestDisaster.severity === 'CRITICAL' || nearestDisaster.distanceKm <= 50;
-      riskPoints += isCritical ? 40 : 25;
-      irregularities.push({
-        type: nearestDisaster.disaster_type,
-        severity: isCritical ? 'CRITICAL' : 'WARNING',
-        title: `Active ${nearestDisaster.disaster_type} Hazard Zone (${nearestDisaster.distanceKm} km)`,
-        description: `Verified alert (${nearestDisaster.title}) tracked within ${nearestDisaster.distanceKm} km. Emergency operations activated.`,
-      });
+    nearbyDisasters.sort((a, b) => a.distanceKm - b.distanceKm);
+
+    if (nearbyDisasters.length > 0) {
+      const immediate = nearbyDisasters.filter(d => d.distanceKm <= 60);
+      const regional = nearbyDisasters.filter(d => d.distanceKm > 60 && d.distanceKm <= 200);
+
+      if (immediate.length > 0) {
+        const top = immediate[0];
+        const isCrit = top.severity === 'CRITICAL' || top.severity === 'SEVERE' || immediate.length >= 2;
+        riskPoints += isCrit ? 52 : 38;
+        irregularities.push({
+          type: (top.disaster_type || 'FLOOD').toUpperCase(),
+          severity: isCrit ? 'CRITICAL' : 'WARNING',
+          title: `Active Hazard In Locality (${top.distanceKm} km)`,
+          description: `${top.title || top.disaster_type} verified within immediate vicinity (${top.distanceKm} km). ${immediate.length} emergency incident(s) active.`,
+        });
+      } else if (regional.length > 0) {
+        const top = regional[0];
+        riskPoints += Math.min(32, 16 + regional.length * 5);
+        irregularities.push({
+          type: (top.disaster_type || 'FLOOD').toUpperCase(),
+          severity: 'WARNING',
+          title: `Regional Hazard Corridor (${top.distanceKm} km)`,
+          description: `${top.title || top.disaster_type} active in neighboring district (${top.distanceKm} km). Regional monitoring active.`,
+        });
+      }
     }
 
     // If no anomalies were flagged
@@ -702,11 +747,11 @@ export const api = {
       });
     }
 
-    const overallScore = Math.min(98, Math.max(16, riskPoints));
+    const overallScore = Math.min(98, Math.max(18, riskPoints));
     const overallLevel =
-      overallScore >= 75 ? 'CRITICAL' :
-      overallScore >= 50 ? 'HIGH' :
-      overallScore >= 30 ? 'MODERATE' : 'LOW';
+      overallScore >= 70 ? 'CRITICAL' :
+      overallScore >= 45 ? 'HIGH' :
+      overallScore >= 28 ? 'MODERATE' : 'LOW';
 
     return {
       localityName: geo.locality || 'User Locality',

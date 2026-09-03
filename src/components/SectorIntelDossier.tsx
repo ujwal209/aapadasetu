@@ -272,25 +272,43 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
         precipitation_mm: w.precipitation_mm,
       } : null;
 
-      // Risk score is calculated ONLY after AI analysis of verified dispatches and sensors
+      // Risk score is calculated from hazard metadata, AI intelligence, or environmental baseline
       let fetchedRisk = null;
       if (intel && (intel as any).risk_evidence) {
         fetchedRisk = {
           overallRiskScore: (intel as any).risk_evidence.score,
           overallRiskLevel: (intel as any).risk_evidence.level,
         };
+      } else if (item?.type === 'DISASTER') {
+        const sev = ((item as any).data?.severity || '').toUpperCase();
+        const isCrit = sev === 'CRITICAL' || sev === 'SEVERE';
+        const isHigh = sev === 'HIGH' || sev === 'WARNING';
+        fetchedRisk = {
+          overallRiskScore: isCrit ? 92 : isHigh ? 78 : 65,
+          overallRiskLevel: (isCrit ? 'CRITICAL' : isHigh ? 'HIGH' : 'MODERATE') as any,
+        };
+      } else if (item?.type === 'QUAKE') {
+        const mag = Number((item as any).data?.magnitude || 0);
+        const isCrit = mag >= 5.0;
+        const isHigh = mag >= 3.5;
+        fetchedRisk = {
+          overallRiskScore: isCrit ? 90 : isHigh ? 74 : 52,
+          overallRiskLevel: (isCrit ? 'CRITICAL' : isHigh ? 'HIGH' : 'MODERATE') as any,
+        };
       } else if (intel && intel.articles && intel.articles.length > 0) {
         const combined = intel.articles.map(a => `${a.title} ${a.snippet}`).join(' ').toLowerCase();
-        const isCrit = /(dead|fatal|catastroph|emergency|landslide|submerged)/.test(combined);
-        const isHigh = /(flood|cyclone|warning|evacuat|heavy rain)/.test(combined);
+        const isCrit = /(dead|fatal|catastroph|emergency|landslide|submerged|critical|breach)/.test(combined);
+        const isHigh = /(flood|cyclone|warning|evacuat|heavy rain|damage|deluge)/.test(combined);
         fetchedRisk = {
-          overallRiskScore: isCrit ? 85 : isHigh ? 65 : 25,
-          overallRiskLevel: (isCrit ? 'CRITICAL' : isHigh ? 'HIGH' : 'LOW') as any,
+          overallRiskScore: isCrit ? 88 : isHigh ? 72 : 48,
+          overallRiskLevel: (isCrit ? 'CRITICAL' : isHigh ? 'HIGH' : 'MODERATE') as any,
         };
       } else {
+        // High terrain hazard sector fallback (Himalayan / Northeast)
+        const isHimalayanOrNe = lat >= 26.0 && (lon <= 82.0 || lon >= 88.0);
         fetchedRisk = {
-          overallRiskScore: 20,
-          overallRiskLevel: 'LOW' as any,
+          overallRiskScore: isHimalayanOrNe ? 68 : 38,
+          overallRiskLevel: (isHimalayanOrNe ? 'HIGH' : 'MODERATE') as any,
         };
       }
 
