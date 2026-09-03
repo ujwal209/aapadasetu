@@ -609,7 +609,7 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
       {children}
 
       {/* 1. LAYER SWITCHER (Top Right - No collision with SearchCard) */}
-      <div className="absolute top-4 right-4 sm:right-6 z-[450] flex flex-col items-end space-y-2 select-none pointer-events-auto">
+      <div className="absolute top-3 sm:top-4 right-3 sm:right-6 z-[450] flex flex-col items-end space-y-2 select-none pointer-events-auto">
         <div className="relative">
           <button
             onClick={() => setIsLayerMenuOpen(!isLayerMenuOpen)}

@@ -249,7 +249,7 @@ export const SearchCard: React.FC<SearchCardProps> = ({
   };
 
   return (
-    <div ref={containerRef} className="absolute top-4 left-4 sm:left-5 z-[450] w-[calc(100%-2rem)] sm:w-[380px] lg:w-[420px] max-w-[calc(100%-2rem)] pointer-events-auto select-text space-y-2.5">
+    <div ref={containerRef} className="absolute top-3 sm:top-4 left-3 sm:left-5 z-[450] w-[calc(100%-4.5rem)] sm:w-[380px] lg:w-[420px] max-w-[calc(100%-4.5rem)] sm:max-w-none pointer-events-auto select-text space-y-2.5">
       {/* Search Input Bar (Enterprise Geometry) */}
       <form
         onSubmit={(e) => {

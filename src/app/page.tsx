@@ -175,9 +175,14 @@ export default function DisasterCommandPage() {
   // Responsive screen-size tracking
   useEffect(() => {
     const handleCheckMobile = () => {
-      setIsMobile(window.innerWidth < 640);
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
     };
     handleCheckMobile();
+    // Default to closed sidebar on mobile screen on initial load so map is immediately visible
+    if (window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
     window.addEventListener('resize', handleCheckMobile);
     return () => window.removeEventListener('resize', handleCheckMobile);
   }, []);
@@ -505,11 +510,13 @@ export default function DisasterCommandPage() {
       {isSidebarOpen && (
         <aside
           style={{
-            width: isMobile ? '100%' : `${sidebarWidth}px`,
+            width: isMobile ? '100vw' : `${sidebarWidth}px`,
           }}
-          className={`relative ${
-            isMobile ? 'w-full' : ''
-          } h-full flex flex-col bg-white dark:bg-black border-r border-neutral-200 dark:border-neutral-800 flex-shrink-0 z-40 shadow-2xl transition-[width] ${
+          className={`${
+            isMobile 
+              ? 'fixed inset-0 z-50 w-full h-full' 
+              : 'relative h-full flex-shrink-0 z-40'
+          } flex flex-col bg-white dark:bg-black border-r border-neutral-200 dark:border-neutral-800 shadow-2xl transition-[width] ${
             isResizing ? 'transition-none' : 'duration-150'
           }`}
         >
@@ -524,8 +531,7 @@ export default function DisasterCommandPage() {
             </div>
           )}
 
-          {/* Header Bar */}
-          {/* 1. Header Bar: Enterprise Mission Control (Compact, No Big Risk Banner) */}
+          {/* Header Bar: Enterprise Mission Control */}
           <div className="px-4 py-2.5 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between flex-shrink-0 bg-white dark:bg-black">
             <div className="flex items-center space-x-2 min-w-0">
               <div className="flex items-center justify-center w-7 h-7 rounded-md overflow-hidden flex-shrink-0 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
@@ -548,12 +554,12 @@ export default function DisasterCommandPage() {
                       onClick={() => setActiveTab('telemetry')}
                       className={`flex items-center space-x-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold border transition ml-1 cursor-pointer flex-shrink-0 ${
                         isCrit
-                          ? 'bg-rose-500/15 text-rose-300 border-rose-500/40 shadow-xs'
-                          : 'bg-neutral-900 text-neutral-200 border-neutral-800'
+                          ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 shadow-xs'
+                          : 'bg-neutral-100 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 border-neutral-200 dark:border-neutral-800'
                       }`}
                       title="View dynamic multi-hazard risk assessment"
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full ${isCrit ? 'bg-rose-400 animate-ping' : 'bg-white'}`}></span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isCrit ? 'bg-rose-400 animate-ping' : 'bg-neutral-900 dark:bg-white'}`}></span>
                       <span className="opacity-60 text-[10px]">RISK</span>
                       <span>{score}</span>
                       <span className="text-[9px] uppercase tracking-wider font-semibold">({level})</span>
@@ -561,7 +567,7 @@ export default function DisasterCommandPage() {
                   );
                 })()
               ) : (
-                <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border border-neutral-800 text-neutral-400 ml-1 flex-shrink-0">
+                <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border border-neutral-200 dark:border-neutral-800 text-neutral-500 dark:text-neutral-400 ml-1 flex-shrink-0">
                   <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse"></span>
                   <span>RISK: ANALYZING...</span>
                 </div>
@@ -569,6 +575,18 @@ export default function DisasterCommandPage() {
             </div>
 
             <div className="flex items-center space-x-1 flex-shrink-0">
+              {/* Mobile "View Map" Quick Switcher */}
+              {isMobile && (
+                <button
+                  onClick={() => setIsSidebarOpen(false)}
+                  className="px-2.5 py-1 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black font-mono text-[11px] font-bold flex items-center space-x-1 shadow-xs mr-1 cursor-pointer"
+                  title="Close operations drawer and view map"
+                >
+                  <Globe2 className="w-3.5 h-3.5" />
+                  <span>Map</span>
+                </button>
+              )}
+
               {/* Theme Toggle Control */}
               <button
                 onClick={toggleTheme}
@@ -584,16 +602,16 @@ export default function DisasterCommandPage() {
                 title="Collapse Command Console"
                 className="p-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-200 transition"
               >
-                <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />
+                {isMobile ? <X className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />}
               </button>
             </div>
           </div>
 
-          {/* Minimalist Operational Status Bar (Border color-coded to map when zone selected) */}
+          {/* Minimalist Operational Status Bar (Adaptive Light & Dark, Border color-coded to map) */}
           <div 
             style={{ borderColor: selectedZone ? selectedZone.color : undefined }}
-            className={`px-3.5 py-2.5 bg-neutral-950 border-b flex items-center justify-between text-xs flex-shrink-0 transition-colors duration-200 ${
-              selectedZone ? '' : 'border-neutral-800'
+            className={`px-3.5 py-2.5 bg-neutral-100/80 dark:bg-neutral-950 border-b flex items-center justify-between text-xs flex-shrink-0 transition-colors duration-200 ${
+              selectedZone ? '' : 'border-neutral-200 dark:border-neutral-800'
             }`}
           >
             <div className="flex items-center space-x-2.5 min-w-0">
@@ -602,7 +620,7 @@ export default function DisasterCommandPage() {
                 className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" 
               />
               <div className="flex items-center space-x-2 min-w-0">
-                <span className="font-semibold text-white truncate">
+                <span className="font-semibold text-neutral-900 dark:text-white truncate">
                   {selectedZone ? selectedZone.name : 'All Continental Sectors'}
                 </span>
                 {selectedZone && (
@@ -618,17 +636,17 @@ export default function DisasterCommandPage() {
 
             <div className="flex items-center space-x-2 shrink-0 ml-2">
               {isScanningSector && (
-                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-700 text-neutral-200 animate-pulse flex items-center space-x-1">
+                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 animate-pulse flex items-center space-x-1">
                   <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                  <span>SCANNING...</span>
+                  <span className="hidden sm:inline">SCANNING...</span>
                 </span>
               )}
               <button
                 onClick={() => setActiveTab('regions')}
                 className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-md border transition cursor-pointer ${
                   activeTab === 'regions'
-                    ? 'bg-white text-black border-white'
-                    : 'text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 border-neutral-800'
+                    ? 'bg-black text-white dark:bg-white dark:text-black border-black dark:border-white shadow-xs'
+                    : 'text-neutral-700 dark:text-neutral-300 hover:text-black dark:hover:text-white bg-neutral-200/80 dark:bg-neutral-900 hover:bg-neutral-300 dark:hover:bg-neutral-800 border-neutral-300 dark:border-neutral-800'
                 }`}
               >
                 {activeTab === 'regions' ? 'Sectors Active' : 'Sectors Tab →'}
@@ -988,18 +1006,20 @@ export default function DisasterCommandPage() {
           />
         </GlobeViewer3D>
 
-        {/* Floating Command Operations Trigger (When sidebar collapsed) */}
+        {/* Floating Command Operations Trigger (Desktop & Mobile) */}
         {!isSidebarOpen && (
-          <button
-            onClick={() => setIsSidebarOpen(true)}
-            className="absolute bottom-6 left-6 z-30 flex items-center space-x-2.5 px-3.5 py-2.5 bg-black dark:bg-white text-white dark:text-black rounded-xl shadow-2xl font-bold text-xs sm:text-sm border border-neutral-800 dark:border-neutral-200 transition transform hover:scale-105"
-          >
-            <div className="w-5 h-5 rounded-sm overflow-hidden flex-shrink-0">
-              <img src="/logobgblack.png" alt="Aapda Setu" className="w-full h-full object-contain block dark:hidden" />
-              <img src="/logobgwhite.png" alt="Aapda Setu" className="w-full h-full object-contain hidden dark:block" />
-            </div>
-            <span>Open Command Operations</span>
-          </button>
+          <div className="absolute bottom-4 sm:bottom-6 left-4 sm:left-6 z-40 flex items-center space-x-2 pointer-events-auto">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="flex items-center space-x-2.5 px-3.5 py-2.5 bg-black dark:bg-white text-white dark:text-black rounded-xl shadow-2xl font-bold text-xs sm:text-sm border border-neutral-800 dark:border-neutral-200 transition transform hover:scale-105 active:scale-95 cursor-pointer"
+            >
+              <div className="w-5 h-5 rounded-xs overflow-hidden flex-shrink-0">
+                <img src="/logobgwhite.png" alt="Aapda Setu" className="w-full h-full object-contain block dark:hidden" />
+                <img src="/logobgblack.png" alt="Aapda Setu" className="w-full h-full object-contain hidden dark:block" />
+              </div>
+              <span>Open Operations ({liveDisasters.length} Hazards)</span>
+            </button>
+          </div>
         )}
       </main>
     </div>
