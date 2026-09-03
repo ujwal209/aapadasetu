@@ -604,6 +604,26 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
     );
   }, [selectedCoordinates]);
 
+  // Operational Sector Camera Zoom & Fit (Precise Bounding Box Fit)
+  useEffect(() => {
+    const map = leafletMapRef.current;
+    const L = (window as any).L;
+    if (!map || !L) return;
+
+    if (selectedZone) {
+      const latLngs = selectedZone.coordinates.map(([lon, lat]) => [lat, lon]);
+      const bounds = L.latLngBounds(latLngs);
+      map.fitBounds(bounds, {
+        padding: [35, 35],
+        maxZoom: 7.5,
+        animate: true,
+        duration: 1.2,
+      });
+    } else if (effectiveZoneId === null) {
+      map.flyTo([23.0, 80.5], 4.5, { duration: 1.2 });
+    }
+  }, [effectiveZoneId, selectedZone]);
+
   // User Location Marker
   useEffect(() => {
     const map = leafletMapRef.current;

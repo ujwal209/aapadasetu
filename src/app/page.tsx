@@ -97,18 +97,8 @@ export default function DisasterCommandPage() {
       setTargetCoords({
         lat: 23.0,
         lon: 80.5,
-        zoom: 4.4,
-        name: 'All India & Himalayas',
-      });
-      return;
-    }
-    if (selectedZoneId === zone.id) {
-      setSelectedZoneId(null);
-      setTargetCoords({
-        lat: 23.0,
-        lon: 80.5,
-        zoom: 4.4,
-        name: 'All India & Himalayas',
+        zoom: 4.5,
+        name: 'All Continental Sectors',
       });
       return;
     }
