@@ -68,7 +68,7 @@ const GlobeViewer3D = dynamic(
 
 export default function DisasterCommandPage() {
   const { theme, toggleTheme } = useTheme();
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
   const [activeTab, setActiveTab] = useState<'regions' | 'alerts' | 'intel' | 'telemetry' | 'assistant' | 'shelters' | 'sos' | 'resources'>('regions');
 
   // Inspected Item State
@@ -170,7 +170,7 @@ export default function DisasterCommandPage() {
   // Resizable Sidebar Width State
   const [sidebarWidth, setSidebarWidth] = useState<number>(500);
   const [isResizing, setIsResizing] = useState<boolean>(false);
-  const [isMobile, setIsMobile] = useState<boolean>(false);
+  const [isMobile, setIsMobile] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
 
   // Responsive screen-size tracking
   useEffect(() => {
@@ -179,10 +179,6 @@ export default function DisasterCommandPage() {
       setIsMobile(mobile);
     };
     handleCheckMobile();
-    // Default to closed sidebar on mobile screen on initial load so map is immediately visible
-    if (window.innerWidth < 768) {
-      setIsSidebarOpen(false);
-    }
     window.addEventListener('resize', handleCheckMobile);
     return () => window.removeEventListener('resize', handleCheckMobile);
   }, []);
@@ -521,7 +517,7 @@ export default function DisasterCommandPage() {
           }}
           className={`${
             isMobile 
-              ? 'fixed inset-0 z-50 w-full h-full' 
+              ? 'fixed inset-0 z-[9999] w-full h-full' 
               : 'relative h-full flex-shrink-0 z-40'
           } flex flex-col bg-white dark:bg-black border-r border-neutral-200 dark:border-neutral-800 shadow-2xl transition-[width] ${
             isResizing ? 'transition-none' : 'duration-150'
@@ -585,7 +581,14 @@ export default function DisasterCommandPage() {
               {/* Mobile "View Map" Quick Switcher */}
               {isMobile && (
                 <button
-                  onClick={() => setIsSidebarOpen(false)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsSidebarOpen(false);
+                  }}
+                  onTouchEnd={(e) => {
+                    e.stopPropagation();
+                    setIsSidebarOpen(false);
+                  }}
                   className="px-2.5 py-1 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-black font-mono text-[11px] font-bold flex items-center space-x-1 shadow-xs mr-1 cursor-pointer"
                   title="Close operations drawer and view map"
                 >
@@ -605,7 +608,14 @@ export default function DisasterCommandPage() {
 
               {/* Collapse / Close Control */}
               <button
-                onClick={() => setIsSidebarOpen(false)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsSidebarOpen(false);
+                }}
+                onTouchEnd={(e) => {
+                  e.stopPropagation();
+                  setIsSidebarOpen(false);
+                }}
                 title="Collapse Command Console"
                 className="p-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-200 transition"
               >
@@ -1015,9 +1025,16 @@ export default function DisasterCommandPage() {
 
         {/* Floating Command Operations Trigger (Desktop & Mobile) */}
         {!isSidebarOpen && (
-          <div className="absolute bottom-4 sm:bottom-6 left-4 sm:left-6 z-40 flex items-center space-x-2 pointer-events-auto">
+          <div className="absolute bottom-4 sm:bottom-6 left-4 sm:left-6 z-[500] flex items-center space-x-2 pointer-events-auto">
             <button
-              onClick={() => setIsSidebarOpen(true)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsSidebarOpen(true);
+              }}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                setIsSidebarOpen(true);
+              }}
               className="flex items-center space-x-2.5 px-3.5 py-2.5 bg-black dark:bg-white text-white dark:text-black rounded-xl shadow-2xl font-bold text-xs sm:text-sm border border-neutral-800 dark:border-neutral-200 transition transform hover:scale-105 active:scale-95 cursor-pointer"
             >
               <div className="w-5 h-5 rounded-xs overflow-hidden flex-shrink-0">

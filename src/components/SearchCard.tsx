@@ -260,9 +260,16 @@ export const SearchCard: React.FC<SearchCardProps> = ({
       >
         <button
           type="button"
-          onClick={onToggleMenu}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMenu();
+          }}
+          onTouchEnd={(e) => {
+            e.stopPropagation();
+            onToggleMenu();
+          }}
           title="Open Operations Drawer"
-          className="p-1 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition flex items-center space-x-1.5 mr-0.5"
+          className="p-1 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition flex items-center space-x-1.5 mr-0.5 cursor-pointer"
         >
           <div className="w-5 h-5 rounded-xs overflow-hidden flex-shrink-0">
             <img src="/logobgwhite.png" alt="Aapda Setu" className="w-full h-full object-contain block dark:hidden" />

@@ -402,6 +402,7 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
         wheelDebounceTime: 60,
         zoomSnap: 0.5,
         zoomDelta: 0.5,
+        tap: false,
       });
 
       leafletMapRef.current = map;
