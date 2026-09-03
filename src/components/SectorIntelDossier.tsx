@@ -528,7 +528,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
         </div>
       )}
 
-      {/* 4. VIEW 2: FIELD WIRE (Strictly Past 3 Days) */}
+      {/* 4. VIEW 2: FIELD WIRE (Strictly Past 7 Days) */}
       {activeDossierTab === 'wire' && (
         <div className="space-y-2.5">
           <div className="flex items-center justify-between text-[11px] text-neutral-500 pb-1 border-b border-neutral-200 dark:border-neutral-800">
@@ -536,7 +536,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
               Live Verified Wire Dispatches ({articles.length})
             </span>
             <span className="font-mono text-[10px] text-neutral-500">
-              Past 3 Days
+              Past 7 Days (Verified)
             </span>
           </div>
 

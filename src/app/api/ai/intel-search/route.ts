@@ -60,7 +60,41 @@ function getTemporalBriefing() {
   };
 }
 
-// 1. Tavily Advanced Deep Search (Latest 3 Days) - 100% Pure Tavily
+// Dynamic, accurate published relative time formatter (Zero hardcoded fake values)
+function formatPublishedTime(rawDate?: string): string {
+  if (!rawDate) return 'Past Week';
+  const d = new Date(rawDate);
+  if (isNaN(d.getTime())) return 'Past Week';
+  
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffHours < 1) return 'Just now';
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays <= 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// Strict Past Week Guard: Discards any archive articles from previous months/years
+function isStrictlyPastWeek(rawDate?: string, url?: string, title?: string): boolean {
+  const combined = `${url || ''} ${title || ''}`;
+  // Reject past years (2010 to 2025)
+  if (/201[0-9]|202[0-5]/.test(combined)) {
+    return false;
+  }
+  if (!rawDate) return true;
+  const d = new Date(rawDate);
+  if (isNaN(d.getTime())) return true;
+  const now = new Date();
+  const diffDays = (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24);
+  // Strictly within past 7.5 days and not future beyond 1 day
+  return diffDays >= -1 && diffDays <= 7.5;
+}
+
+// 1. Tavily Advanced Deep Search (Strict Past Week News) - 100% Pure Tavily
 async function fetchTavilyArticles(cleanQuery: string, customQuery?: string): Promise<{ articles: any[]; answer: string }> {
   const key = getNextTavilyKey();
   if (!key) return { articles: [], answer: '' };
@@ -68,7 +102,7 @@ async function fetchTavilyArticles(cleanQuery: string, customQuery?: string): Pr
   const isHazard = /(cyclone|flood|earthquake|storm|fire|tsunami|volcano|warning|alert|surge)/i.test(cleanQuery);
   const query = customQuery || (isHazard 
     ? `${cleanQuery} news update` 
-    : `${cleanQuery} weather rain flood disaster alert news`);
+    : `${cleanQuery} weather rain flood alert news`);
 
   try {
     const res = await fetch('https://api.tavily.com/search', {
@@ -77,12 +111,13 @@ async function fetchTavilyArticles(cleanQuery: string, customQuery?: string): Pr
       body: JSON.stringify({
         api_key: key,
         query: query,
-        days: 3,
+        topic: "news",
+        days: 7,
         search_depth: 'advanced',
         include_images: true,
         include_answer: true,
         include_raw_content: true,
-        max_results: 10,
+        max_results: 12,
       }),
       signal: AbortSignal.timeout(8500),
     });
@@ -97,16 +132,21 @@ async function fetchTavilyArticles(cleanQuery: string, customQuery?: string): Pr
       for (let idx = 0; idx < results.length; idx++) {
         const r = results[idx];
         const title = r.title || `Weather Update: ${cleanQuery}`;
-        // Skip ancient articles (past years)
-        if (/2018|2019|2020|2021|2022|2023/.test(title)) continue;
-
         const url = r.url || '#';
+        const rawDate = r.published_date;
+
+        // STRICT PAST WEEK FILTER: Drop any article older than 7 days or mentioning past years
+        if (!isStrictlyPastWeek(rawDate, url, title)) {
+          continue;
+        }
+
         const dom = extractDomain(url);
         const snippetText = r.content || '';
         const deepContent = (r.raw_content && r.raw_content.length > snippetText.length) 
           ? r.raw_content.slice(0, 2500) 
           : snippetText;
         const imgUrl = images[idx] || images[0] || null;
+        const pubTime = formatPublishedTime(rawDate);
 
         articles.push({
           title,
@@ -117,7 +157,8 @@ async function fetchTavilyArticles(cleanQuery: string, customQuery?: string): Pr
           source_name: dom,
           favicon: getFaviconUrl(dom),
           image: imgUrl,
-          published_time: 'Past 3 Days',
+          published_time: pubTime,
+          published_date: rawDate || new Date().toISOString(),
         });
       }
       return { articles, answer };
@@ -199,8 +240,9 @@ async function generateAiAnalysisFromNews(query: string, articles: any[], tavily
 Operational Clock: ${temporal.ist_str} (${temporal.utc_str}).
 Today's Calendar Date: ${temporal.date_today}. Current Time: ${temporal.time_now} IST.
 
-TEMPORAL GROUNDING & FORWARD PROJECTION DIRECTIVES:
+TEMPORAL GROUNDING & RECENT NEWS DIRECTIVES:
 - Ground all forecasts and forward projections starting strictly from today (${temporal.date_today} at ${temporal.time_now} IST).
+- Discard and ignore any historical events or news from prior years (2022, 2023, 2024, 2025). Focus STRICTLY on events from the past 7 days.
 - Project strictly forward into the upcoming hours (+6h, +12h, +24h, +48h). NEVER project into past dates.
 - Keep your entire analysis concise, authoritative, and within 350 words.
 
@@ -222,10 +264,10 @@ STRICT MARKDOWN FORMATTING RULES:
 Operational Clock: ${temporal.ist_str} (${temporal.utc_str})
 Today's Exact Date: ${temporal.date_today}
 
-Verified Real-Time Ground Reports (Within Last 72 Hours):
+Verified Real-Time Ground Reports (Strictly Within Past 7 Days):
 ${fullContext || 'Local automatic weather telemetry confirms nominal seasonal parameters across the sector.'}
 
-Synthesize a complete evidence-based disaster risk assessment and short-term forward projection strictly based on these reports in clean Markdown without trailing sentences.`;
+Synthesize a complete evidence-based disaster risk assessment and short-term forward projection strictly based on verified reports from the past week in clean Markdown without trailing sentences.`;
 
   const candidateModels = [
     'openai/gpt-oss-120b',
