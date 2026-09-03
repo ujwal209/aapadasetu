@@ -335,7 +335,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
                 <>
                   <div className="flex items-center space-x-1.5">
                     <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
-                      ACTIVE HAZARD // {item.data.disaster_type}
+                      Active Hazard • {item.data.disaster_type}
                     </span>
                     <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 font-semibold">
                       {item.data.severity}
@@ -351,7 +351,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
               ) : item?.type === 'QUAKE' ? (
                 <>
                   <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 uppercase tracking-widest block font-bold">
-                    SEISMIC TELEMETRY // M{item.data.magnitude.toFixed(1)}
+                    Seismic Telemetry • M{item.data.magnitude.toFixed(1)}
                   </span>
                   <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5">
                     {item.data.place}
@@ -365,7 +365,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
               ) : (
                 <>
                   <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest block font-semibold">
-                    METROPOLITAN SECTOR // {parentCity || "ACTIVE"}
+                    Metropolitan Sector
                   </span>
                   <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5">
                     {parentCity || "Sector Area"}
@@ -411,7 +411,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
       <div className="grid grid-cols-5 p-1 bg-neutral-100 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-lg gap-1 flex-shrink-0">
         {[
           { id: 'ai', label: 'Briefing', fullLabel: 'Situation Briefing', icon: FileText },
-          { id: 'wire', label: 'Wire', fullLabel: 'Field Wire (Past 3 Days)', icon: Newspaper },
+          { id: 'wire', label: 'Wire', fullLabel: 'Field Wire (Past 7 Days)', icon: Newspaper },
           { id: 'risk', label: 'Matrix', fullLabel: 'Threat Risk Matrix', icon: Activity },
           { id: 'radar', label: 'Radar', fullLabel: 'Surveillance & Sensors', icon: Radar },
           { id: 'relief', label: 'Aid', fullLabel: 'Ground Relief Hubs', icon: Home },
