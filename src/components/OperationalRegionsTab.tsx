@@ -1,6 +1,6 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Crosshair, 
   Globe2, 
@@ -9,7 +9,8 @@ import {
   Waves, 
   Mountain, 
   MapPin, 
-  ChevronDown 
+  ChevronDown,
+  Check 
 } from 'lucide-react';
 import { INDIA_DISASTER_ZONES, DisasterZone } from '../lib/india-zones';
 import { LiveDisaster } from '../types';
@@ -27,6 +28,10 @@ export const OperationalRegionsTab: React.FC<OperationalRegionsTabProps> = ({
   disasters = [],
   isScanningSector = false,
 }) => {
+  // Custom Dropdown State & Ref
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   // Northern Himalayas is default when selectedZoneId is not specified
   const effectiveId = selectedZoneId ?? 'ZONE-1-HIMALAYAN';
   const selectedZone = INDIA_DISASTER_ZONES.find((z) => z.id === effectiveId) || INDIA_DISASTER_ZONES[0];
@@ -41,42 +46,160 @@ export const OperationalRegionsTab: React.FC<OperationalRegionsTabProps> = ({
     ? disasters.length 
     : getZoneIncidentCount(selectedZone.id);
 
+  // Click outside and escape key handling
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsDropdownOpen(false);
+      }
+    };
+
+    if (isDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isDropdownOpen]);
+
   return (
     <div className="space-y-4 text-neutral-900 dark:text-white font-sans">
-      {/* 1. Executive Sector Dropdown Selector */}
-      <div className="space-y-2">
+      {/* 1. Executive Sector Dropdown Selector (Custom SaaS Component) */}
+      <div className="space-y-1.5" ref={dropdownRef}>
         <div className="flex items-center justify-between text-[11px] font-mono tracking-wider text-neutral-500 dark:text-neutral-400">
-          <label htmlFor="sector-selector" className="font-semibold uppercase flex items-center space-x-1.5">
-            <span>Operational Sector</span>
-          </label>
+          <span className="font-semibold uppercase">Operational Sector</span>
           <span className="text-[10px] text-neutral-400">
-            {isContinentalMode ? 'All Sectors Active' : `${selectedZone.name}`}
+            {isContinentalMode ? 'All Sectors' : selectedZone.name}
           </span>
         </div>
 
         <div className="relative">
-          <select
-            id="sector-selector"
-            value={selectedZoneId || 'ALL'}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === 'ALL') {
-                onSelectZone(null);
-              } else {
-                const z = INDIA_DISASTER_ZONES.find((x) => x.id === val) || null;
-                onSelectZone(z);
-              }
-            }}
-            className="w-full bg-white dark:bg-black text-neutral-900 dark:text-white border border-neutral-300 dark:border-neutral-800 rounded-xl px-3.5 py-2.5 text-xs font-semibold focus:outline-none focus:border-black dark:focus:border-white appearance-none pr-9 cursor-pointer shadow-xs transition"
+          {/* Custom Trigger Button */}
+          <button
+            type="button"
+            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+            className={`w-full bg-white dark:bg-black text-neutral-900 dark:text-white border rounded-xl px-3.5 py-2.5 text-xs font-semibold flex items-center justify-between shadow-xs transition cursor-pointer select-none ${
+              isDropdownOpen 
+                ? 'border-neutral-900 dark:border-white ring-1 ring-neutral-900/10 dark:ring-white/10' 
+                : 'border-neutral-300 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-700'
+            }`}
           >
-            <option value="ALL">🌐 All Continental Sectors (India & Neighboring Basins)</option>
-            {INDIA_DISASTER_ZONES.map((zone) => (
-              <option key={zone.id} value={zone.id}>
-                {zone.name} ({getZoneIncidentCount(zone.id)} Verified Hazards)
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="w-4 h-4 text-neutral-400 absolute right-3 top-3 pointer-events-none" />
+            <div className="flex items-center space-x-2.5 min-w-0">
+              {isContinentalMode ? (
+                <Globe2 className="w-3.5 h-3.5 text-neutral-700 dark:text-neutral-300 shrink-0" />
+              ) : (
+                <span 
+                  style={{ backgroundColor: selectedZone.color }}
+                  className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                />
+              )}
+              <span className="truncate text-left font-bold">
+                {isContinentalMode 
+                  ? 'All Continental Sectors (India & Neighboring Basins)' 
+                  : selectedZone.name}
+              </span>
+            </div>
+
+            <div className="flex items-center space-x-2 shrink-0 ml-2">
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400">
+                {activeZoneIncidents} hazards
+              </span>
+              <ChevronDown 
+                className={`w-4 h-4 text-neutral-400 transition-transform duration-200 ${
+                  isDropdownOpen ? 'rotate-180 text-neutral-900 dark:text-white' : ''
+                }`} 
+              />
+            </div>
+          </button>
+
+          {/* Custom Dropdown Popover Menu */}
+          {isDropdownOpen && (
+            <div className="absolute top-full left-0 right-0 mt-1.5 z-50 bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl overflow-hidden py-1 divide-y divide-neutral-100 dark:divide-neutral-900 animate-in fade-in zoom-in-95 duration-100">
+              {/* Option: Continental Surveillance */}
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectZone(null);
+                  setIsDropdownOpen(false);
+                }}
+                className={`w-full px-3.5 py-2.5 text-left flex items-center justify-between transition cursor-pointer ${
+                  isContinentalMode 
+                    ? 'bg-neutral-100 dark:bg-neutral-900 text-neutral-900 dark:text-white font-bold' 
+                    : 'hover:bg-neutral-50 dark:hover:bg-neutral-900/60 text-neutral-700 dark:text-neutral-300'
+                }`}
+              >
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <Globe2 className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-xs truncate block">All Continental Sectors</span>
+                    <span className="text-[10px] text-neutral-500 font-mono block">Complete Subcontinent Surveillance</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 shrink-0 ml-2">
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
+                    {disasters.length}
+                  </span>
+                  {isContinentalMode && <Check className="w-3.5 h-3.5 text-neutral-900 dark:text-white" />}
+                </div>
+              </button>
+
+              {/* Individual Sectors */}
+              <div className="divide-y divide-neutral-100 dark:divide-neutral-900">
+                {INDIA_DISASTER_ZONES.map((zone) => {
+                  const isSelected = !isContinentalMode && selectedZone.id === zone.id;
+                  const count = getZoneIncidentCount(zone.id);
+
+                  return (
+                    <button
+                      key={zone.id}
+                      type="button"
+                      onClick={() => {
+                        onSelectZone(zone);
+                        setIsDropdownOpen(false);
+                      }}
+                      className={`w-full px-3.5 py-2.5 text-left flex items-center justify-between transition cursor-pointer ${
+                        isSelected 
+                          ? 'bg-neutral-100 dark:bg-neutral-900 text-neutral-900 dark:text-white font-bold' 
+                          : 'hover:bg-neutral-50 dark:hover:bg-neutral-900/60 text-neutral-700 dark:text-neutral-300'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2.5 min-w-0">
+                        <span 
+                          style={{ backgroundColor: zone.color }}
+                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs" 
+                        />
+                        <div className="min-w-0">
+                          <span className="text-xs truncate block font-semibold">
+                            {zone.name}
+                          </span>
+                          <span className="text-[10px] text-neutral-500 font-mono block truncate">
+                            {zone.subtitle}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2 shrink-0 ml-2">
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
+                          {count}
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-neutral-900 dark:text-white" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
