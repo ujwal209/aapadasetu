@@ -60,20 +60,24 @@ export async function GET(req: Request) {
         address.district ||
         locality;
 
-      const city =
+      const parentCity =
         address.city ||
         address.town ||
         address.municipality ||
-        district;
+        address.state_district ||
+        address.county ||
+        address.district ||
+        locality;
 
       const state = address.state || 'State';
       const country = address.country || 'Country';
 
       const payload = {
-        display_name: data.display_name || `${locality}, ${city}, ${state}`,
+        display_name: data.display_name || `${locality}, ${parentCity}, ${state}`,
         locality,
         district,
-        city,
+        city: parentCity,
+        parent_city: parentCity,
         state,
         country,
         latitude,
@@ -92,7 +96,8 @@ export async function GET(req: Request) {
     display_name: `${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E`,
     locality: 'Active Sector',
     district: 'Local District',
-    city: 'Designated Sector',
+    city: 'Active Sector',
+    parent_city: 'Active Sector',
     state: 'State',
     country: 'India',
     latitude,

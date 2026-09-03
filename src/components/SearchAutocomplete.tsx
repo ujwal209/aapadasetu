@@ -9,6 +9,8 @@ export interface PlaceSuggestion {
   lon: number;
   display_name: string;
   name: string;
+  parentCity?: string;
+  locality?: string;
   type: string;
   address?: {
     city?: string;

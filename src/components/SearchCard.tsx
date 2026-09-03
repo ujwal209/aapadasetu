@@ -19,9 +19,9 @@ import { useTheme } from '../context/ThemeContext';
 import { PlaceSuggestion } from './SearchAutocomplete';
 
 interface SearchCardProps {
-  onSelectPlace: (place: { lat: number; lon: number; name: string; displayName: string; parentCity?: string }) => void;
+  onSelectPlace: (place: { lat: number; lon: number; name: string; displayName: string; parentCity?: string; locality?: string }) => void;
   onToggleMenu: () => void;
-  onFilterClick: (filter: 'hazards' | 'shelters' | 'cities' | 'sos' | 'safe') => void;
+  onFilterClick: (filter: 'hazards' | 'shelters' | 'cities' | 'sos' | 'safe' | 'india') => void;
   onDetectLocation: () => void;
   isLocating?: boolean;
 }
@@ -43,9 +43,10 @@ export const SearchCard: React.FC<SearchCardProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Close suggestions when clicking outside
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     };
@@ -53,6 +54,7 @@ export const SearchCard: React.FC<SearchCardProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Live Geocoding Suggestions
   useEffect(() => {
     if (!query.trim() || query.length < 2) {
       setSuggestions([]);
@@ -78,17 +80,20 @@ export const SearchCard: React.FC<SearchCardProps> = ({
               const props = feat.properties || {};
               const geom = feat.geometry || {};
               const coords = geom.coordinates || [78.96, 20.59];
-              const name = props.name || props.city || query.trim();
-              // Prioritize the exact city/place name, never broad state or country!
-              const parentCity = props.city || name;
+              const localityName = props.name || query.trim();
+              
+              // Always extract the true Parent City (metropolitan or district center)
+              const parentCity = props.city || props.town || props.municipality || props.state_district || props.county || props.district || localityName;
               const displayParts = [props.name, props.district || props.city, props.state, props.country].filter(Boolean);
+
               return {
                 place_id: props.osm_id || idx,
                 lat: coords[1],
                 lon: coords[0],
-                display_name: displayParts.join(', ') || name,
-                name: name,
+                display_name: displayParts.join(', ') || localityName,
+                name: localityName,
                 parentCity: parentCity,
+                locality: localityName,
                 type: props.type || props.osm_value || 'place',
                 address: props,
               };
@@ -99,12 +104,12 @@ export const SearchCard: React.FC<SearchCardProps> = ({
           }
         }
 
-        // 2. Fallback Geocoder: Nominatim
+        // 2. Fallback Geocoder: Nominatim with full address decomposition
         const res = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
             query
           )}&addressdetails=1&limit=8`,
-          { headers: { 'User-Agent': 'AapdaSetu-DisasterEngine/1.0' } }
+          { headers: { 'User-Agent': 'AapdaSetu-DisasterEngine/2.0' } }
         );
 
         if (res.ok) {
@@ -112,14 +117,17 @@ export const SearchCard: React.FC<SearchCardProps> = ({
           const mapped: any[] = data.map((item: any) => {
             const parts = item.display_name.split(',');
             const addr = item.address || {};
-            const parentCity = addr.city || addr.town || addr.municipality || parts[0] || item.name || query.trim();
+            const localityName = parts[0]?.trim() || item.name || query.trim();
+            const parentCity = addr.city || addr.town || addr.municipality || addr.state_district || addr.county || addr.district || localityName;
+
             return {
               place_id: item.place_id,
               lat: parseFloat(item.lat),
               lon: parseFloat(item.lon),
               display_name: item.display_name,
-              name: parts[0] || item.name || query.trim(),
-              parentCity,
+              name: localityName,
+              parentCity: parentCity,
+              locality: localityName,
               type: item.type || item.class || 'place',
               address: item.address,
             };
@@ -159,10 +167,19 @@ export const SearchCard: React.FC<SearchCardProps> = ({
           const feat = pData.features[0];
           const props = feat.properties || {};
           const coords = feat.geometry?.coordinates || [78.96, 20.59];
-          const name = props.name || targetQuery.trim();
-          const parentCity = props.city || name;
+          const localityName = props.name || targetQuery.trim();
+          const parentCity = props.city || props.town || props.municipality || props.state_district || props.county || props.district || localityName;
           const displayName = [props.name, props.city || props.district, props.state, props.country].filter(Boolean).join(', ');
-          onSelectPlace({ lat: coords[1], lon: coords[0], name, displayName, parentCity });
+          
+          setQuery(parentCity);
+          onSelectPlace({ 
+            lat: coords[1], 
+            lon: coords[0], 
+            name: parentCity, 
+            locality: localityName, 
+            displayName, 
+            parentCity 
+          });
           return;
         }
       }
@@ -170,7 +187,7 @@ export const SearchCard: React.FC<SearchCardProps> = ({
       // Fallback to Nominatim
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(targetQuery)}&addressdetails=1&limit=1`,
-        { headers: { 'User-Agent': 'AapdaSetu-DisasterEngine/1.0' } }
+        { headers: { 'User-Agent': 'AapdaSetu-DisasterEngine/2.0' } }
       );
       if (res.ok) {
         const data = await res.json();
@@ -178,10 +195,19 @@ export const SearchCard: React.FC<SearchCardProps> = ({
           const first = data[0];
           const lat = parseFloat(first.lat);
           const lon = parseFloat(first.lon);
-          const name = first.display_name.split(',')[0] || targetQuery;
+          const localityName = first.display_name.split(',')[0]?.trim() || targetQuery;
           const addr = first.address || {};
-          const parentCity = addr.city || addr.town || addr.municipality || addr.district || addr.county || addr.state_district || addr.state || name;
-          onSelectPlace({ lat, lon, name, displayName: first.display_name, parentCity });
+          const parentCity = addr.city || addr.town || addr.municipality || addr.state_district || addr.county || addr.district || localityName;
+
+          setQuery(parentCity);
+          onSelectPlace({ 
+            lat, 
+            lon, 
+            name: parentCity, 
+            locality: localityName, 
+            displayName: first.display_name, 
+            parentCity 
+          });
         } else {
           alert(`Location "${targetQuery}" not found. Please check spelling.`);
         }
@@ -194,9 +220,17 @@ export const SearchCard: React.FC<SearchCardProps> = ({
   };
 
   const handleSelect = (place: any) => {
-    setQuery(place.name);
+    const selectedCity = place.parentCity || place.name;
+    setQuery(selectedCity);
     setIsOpen(false);
-    onSelectPlace({ lat: place.lat, lon: place.lon, name: place.name, displayName: place.display_name, parentCity: place.parentCity });
+    onSelectPlace({ 
+      lat: place.lat, 
+      lon: place.lon, 
+      name: selectedCity, 
+      locality: place.name, 
+      displayName: place.display_name, 
+      parentCity: selectedCity 
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -312,11 +346,16 @@ export const SearchCard: React.FC<SearchCardProps> = ({
                 >
                   <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5 text-neutral-400" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-neutral-900 dark:text-white truncate">
-                        {place.name}
+                    <div className="flex items-center space-x-1.5">
+                      <span className="font-semibold text-neutral-900 dark:text-white truncate text-sm">
+                        {place.parentCity || place.name}
                       </span>
-                      <span className="text-[9px] bg-neutral-100 dark:bg-neutral-800 text-neutral-500 px-1.5 py-0.5 rounded-full uppercase">
+                      {place.parentCity && place.name !== place.parentCity && (
+                        <span className="text-[11px] text-neutral-500 truncate font-normal">
+                          ({place.name})
+                        </span>
+                      )}
+                      <span className="text-[9px] bg-neutral-100 dark:bg-neutral-800 text-neutral-500 px-1.5 py-0.5 rounded-full uppercase ml-auto flex-shrink-0">
                         {place.type}
                       </span>
                     </div>

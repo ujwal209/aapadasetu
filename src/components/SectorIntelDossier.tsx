@@ -114,12 +114,15 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
     nearestQuake?: { place: string; magnitude: number; distanceKm: number };
   } | null>(null);
 
+  // Dynamic reverse-geocoded location for exact administrative display
+  const [resolvedLocation, setResolvedLocation] = useState<string | null>(null);
+
   // Helper to extract clean city/town name (first token of comma-separated address)
   const extractCleanCity = (str?: string): string => {
     if (!str) return '';
     // Strip distance prefixes like "24 km SW of Wayanad" or "10 km NW of Puri"
     const cleaned = str.replace(/^[\d\s\w\.\-]+of\s+/i, '').replace(/[\(\)]/g, '').trim();
-    const parts = cleaned.split(',').map((s) => s.trim()).filter(Boolean);
+    const parts = cleaned.split(/[,-]/).map((s) => s.trim()).filter(Boolean);
     if (!parts.length) return '';
     // If the first part is a number or postal code, take the second
     if (/^\d+/.test(parts[0]) && parts.length > 1) {
@@ -131,9 +134,9 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
   const rawName = useMemo(() => {
     if (item) {
       if (item.type === 'CITY') return item.data.name;
-      if (item.type === 'PLACE') return item.displayName || item.name;
+      if (item.type === 'PLACE') return item.name || item.displayName;
       if (item.type === 'SHELTER') return item.data.name;
-      if (item.type === 'DISASTER') return item.data.place;
+      if (item.type === 'DISASTER') return item.data.place || item.data.title;
       if (item.type === 'QUAKE') return item.data.place;
     }
     return currentSector?.locality || currentSector?.name || 'Active Sector';
@@ -142,12 +145,15 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
   const parentCity = useMemo(() => {
     if (item) {
       if (item.type === 'CITY') return item.data.name;
-      if (item.type === 'PLACE') return item.name || extractCleanCity(item.displayName);
+      if (item.type === 'PLACE') return item.parentCity || extractCleanCity(item.displayName) || item.name;
       if (item.type === 'SHELTER') return item.data.district || extractCleanCity(item.data.name);
-      if (item.type === 'DISASTER') return extractCleanCity(item.data.place);
+      if (item.type === 'DISASTER') {
+        const clean = extractCleanCity(item.data.place);
+        return clean || extractCleanCity(item.data.title) || 'Disaster Zone';
+      }
       if (item.type === 'QUAKE') return extractCleanCity(item.data.place);
     }
-    const cand = currentSector?.parentCity || currentSector?.locality || currentSector?.name;
+    const cand = currentSector?.parentCity || currentSector?.name || currentSector?.locality;
     if (cand && !['Active Sector', 'Designated Sector', 'Local Sector'].includes(cand)) {
       return extractCleanCity(cand);
     }
@@ -172,13 +178,35 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
     : currentSector?.lon ?? 78.9629
     : currentSector?.lon ?? 78.9629;
 
-  const cacheKey = `${(parentCity || 'india').toLowerCase().trim()}_${lat.toFixed(2)}_${lon.toFixed(2)}`;
+  const isHazard = item?.type === 'DISASTER' || item?.type === 'QUAKE';
+  const hazardId = item?.type === 'DISASTER' ? item.data.id : item?.type === 'QUAKE' ? item.data.id : '';
+  const cacheKey = `${isHazard ? hazardId : (parentCity || 'india').toLowerCase().trim()}_${lat.toFixed(2)}_${lon.toFixed(2)}`;
   const lastFetchedKeyRef = useRef<string>('');
   const onRiskUpdatedRef = useRef(onRiskAssessmentUpdated);
 
   useEffect(() => {
     onRiskUpdatedRef.current = onRiskAssessmentUpdated;
   }, [onRiskAssessmentUpdated]);
+
+  // Reverse-geocode to ensure verified administrative locality is always known
+  useEffect(() => {
+    let isMounted = true;
+    if (item && (item.type === 'DISASTER' || item.type === 'QUAKE' || item.type === 'PLACE')) {
+      api.reverseGeocode(lat, lon)
+        .then((geo) => {
+          if (!isMounted) return;
+          if (geo && (geo.city || geo.locality || geo.state)) {
+            const locTokens = [geo.locality, geo.city, geo.state, geo.country].filter(Boolean);
+            const dedupedTokens = Array.from(new Set(locTokens));
+            setResolvedLocation(dedupedTokens.slice(0, 3).join(', '));
+          }
+        })
+        .catch(() => {});
+    } else {
+      setResolvedLocation(null);
+    }
+    return () => { isMounted = false; };
+  }, [item, lat, lon]);
 
   useEffect(() => {
     if (!parentCity) return;
@@ -196,9 +224,20 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
     setRiskAssessment(null);
     setIsLoadingAi(true);
 
-    // Fetch fresh live multi-hazard intel and atmospheric sensors (Zero unnecessary image calls)
+    const hazardTitle = item?.type === 'DISASTER' ? item.data.title : item?.type === 'QUAKE' ? item.data.title : undefined;
+    const hazardType = item?.type === 'DISASTER' ? item.data.disaster_type : item?.type === 'QUAKE' ? 'EARTHQUAKE' : undefined;
+
+    // Fetch fresh live multi-hazard intel and atmospheric sensors (100% Pure Tavily with parent city priority)
     const pWeather = api.getLiveCityWeather(lat, lon).catch(() => null);
-    const pIntel = api.getIntelSearch(parentCity, parentCity, lat, lon).catch(() => ({ ai_analysis: null, articles: [] }));
+    const pIntel = api.getIntelSearch(
+      parentCity,
+      parentCity,
+      lat,
+      lon,
+      parentCity,
+      hazardTitle,
+      hazardType
+    ).catch(() => ({ ai_analysis: null, articles: [] }));
 
     Promise.all([pWeather, pIntel]).then(([w, intel]) => {
       const fetchedSensors = w ? {
@@ -244,7 +283,7 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
       setVisibleWireCount(8);
       setIsLoadingAi(false);
     });
-  }, [cacheKey, parentCity, lat, lon]);
+  }, [cacheKey, parentCity, lat, lon, item]);
 
   // 3. LAZY-LOAD REAL-TIME RELIEF FACILITIES: Only fetched if and when the user visits the relief tab
   useEffect(() => {
@@ -292,16 +331,51 @@ export const SectorIntelDossier: React.FC<SectorIntelDossierProps> = ({
               <img src="/logobgblack.png" alt="Aapda Setu" className="w-full h-full object-contain hidden dark:block" />
             </div>
             <div>
-              <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest block">
-                SECTOR // {parentCity || "ACTIVE"}
-              </span>
-              <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5">
-                {parentCity || "Sector Area"}
-              </h2>
-              {rawName !== parentCity && (
-                <span className="text-[10px] text-neutral-500 block">
-                  Local: {rawName}
-                </span>
+              {item?.type === 'DISASTER' ? (
+                <>
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
+                      ACTIVE HAZARD // {item.data.disaster_type}
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 font-semibold">
+                      {item.data.severity}
+                    </span>
+                  </div>
+                  <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5 leading-snug">
+                    {item.data.title}
+                  </h2>
+                  <span className="text-[11px] text-neutral-600 dark:text-neutral-400 flex items-center space-x-1 mt-0.5">
+                    <span>📍 {resolvedLocation || item.data.place}</span>
+                  </span>
+                </>
+              ) : item?.type === 'QUAKE' ? (
+                <>
+                  <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 uppercase tracking-widest block font-bold">
+                    SEISMIC TELEMETRY // M{item.data.magnitude.toFixed(1)}
+                  </span>
+                  <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5">
+                    {item.data.place}
+                  </h2>
+                  {resolvedLocation && (
+                    <span className="text-[11px] text-neutral-500 block mt-0.5">
+                      📍 {resolvedLocation}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest block font-semibold">
+                    METROPOLITAN SECTOR // {parentCity || "ACTIVE"}
+                  </span>
+                  <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 tracking-tight mt-0.5">
+                    {parentCity || "Sector Area"}
+                  </h2>
+                  {(resolvedLocation || (rawName && rawName !== parentCity)) && (
+                    <span className="text-[11px] text-neutral-500 block mt-0.5">
+                      📍 {resolvedLocation || rawName}
+                    </span>
+                  )}
+                </>
               )}
             </div>
           </div>

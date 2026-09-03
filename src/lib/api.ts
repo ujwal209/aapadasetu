@@ -619,7 +619,10 @@ export const api = {
     query: string, 
     place = "Designated Sector", 
     latitude?: number, 
-    longitude?: number
+    longitude?: number,
+    parentCity?: string,
+    hazardTitle?: string,
+    hazardType?: string
   ): Promise<{
     ai_analysis: string;
     articles: Array<{
@@ -643,7 +646,7 @@ export const api = {
       const res = await fetch(`${API_BASE}/ai/intel-search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, place, latitude, longitude }),
+        body: JSON.stringify({ query, place, latitude, longitude, parentCity, hazardTitle, hazardType }),
       });
       if (res.ok) {
         const data = await res.json();

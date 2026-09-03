@@ -60,17 +60,23 @@ function getTemporalBriefing() {
   };
 }
 
-// 1. Tavily Search (Latest 3 Days)
-// 1. Tavily Advanced Deep Search (Latest 3 Days)
-async function fetchTavilyArticles(cleanQuery: string): Promise<{ articles: any[]; answer: string }> {
+// 1. Tavily Advanced Deep Search (Latest 3 Days) - 100% Pure Tavily
+async function fetchTavilyArticles(cleanQuery: string, customQuery?: string): Promise<{ articles: any[]; answer: string }> {
   const key = getNextTavilyKey();
+  if (!key) return { articles: [], answer: '' };
+
+  const isHazard = /(cyclone|flood|earthquake|storm|fire|tsunami|volcano|warning|alert|surge)/i.test(cleanQuery);
+  const query = customQuery || (isHazard 
+    ? `${cleanQuery} news update` 
+    : `${cleanQuery} weather rain flood disaster alert news`);
+
   try {
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         api_key: key,
-        query: `${cleanQuery} weather rain alert flood civic impact news`,
+        query: query,
         days: 3,
         search_depth: 'advanced',
         include_images: true,
@@ -78,7 +84,7 @@ async function fetchTavilyArticles(cleanQuery: string): Promise<{ articles: any[
         include_raw_content: true,
         max_results: 10,
       }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(8500),
     });
 
     if (res.ok) {
@@ -91,7 +97,7 @@ async function fetchTavilyArticles(cleanQuery: string): Promise<{ articles: any[
       for (let idx = 0; idx < results.length; idx++) {
         const r = results[idx];
         const title = r.title || `Weather Update: ${cleanQuery}`;
-        // Skip ancient articles
+        // Skip ancient articles (past years)
         if (/2018|2019|2020|2021|2022|2023/.test(title)) continue;
 
         const url = r.url || '#';
@@ -120,56 +126,6 @@ async function fetchTavilyArticles(cleanQuery: string): Promise<{ articles: any[
     console.warn('[WEBSEARCH] Tavily deep fetch error:', err);
   }
   return { articles: [], answer: '' };
-}
-
-// 2. Google News RSS Fallback
-async function fetchGoogleArticles(cleanQuery: string): Promise<any[]> {
-  try {
-    const searchUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(`"${cleanQuery}" weather when:3d`)}&hl=en-IN&gl=IN&ceid=IN:en`;
-    const res = await fetch(searchUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (res.ok) {
-      const xml = await res.text();
-      const items = xml.split('<item>').slice(1);
-      const articles: any[] = [];
-
-      for (const item of items.slice(0, 8)) {
-        const titleMatch = item.match(/<title>([^<]+)<\/title>/);
-        const linkMatch = item.match(/<link>([^<]+)<\/link>/);
-        const sourceMatch = item.match(/<source[^>]*>([^<]+)<\/source>/);
-        const pubDateMatch = item.match(/<pubDate>([^<]+)<\/pubDate>/);
-        const descMatch = item.match(/<description>([^<]+)<\/description>/);
-
-        const title = titleMatch ? titleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1') : `Weather Update: ${cleanQuery}`;
-        if (/2018|2019|2020|2021|2022|2023/.test(title)) continue;
-
-        const url = linkMatch ? linkMatch[1] : '#';
-        const sourceName = sourceMatch ? sourceMatch[1] : 'Verified News';
-        const domain = extractDomain(url);
-        const rawDesc = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim() : '';
-        const snippet = rawDesc.length > 20 ? rawDesc.slice(0, 380) : `Field wire by ${sourceName}: ${title}`;
-
-        articles.push({
-          title,
-          url,
-          snippet,
-          deep_text: snippet,
-          domain,
-          source_name: sourceName,
-          favicon: getFaviconUrl(domain),
-          image: null,
-          published_time: pubDateMatch ? 'Past 3 Days' : 'Recent',
-        });
-      }
-      return articles;
-    }
-  } catch (e) {
-    console.warn('[WEBSEARCH] Google RSS error:', e);
-  }
-  return [];
 }
 
 // 3. Risk Evidence Calculation
@@ -334,27 +290,39 @@ export async function POST(req: Request) {
     const body = await req.json();
     const query = body.query || body.place || 'Designated Sector';
     const place = body.place || query;
+    const parentCity = body.parentCity || body.parent_city;
+    const hazardTitle = body.hazardTitle || body.hazard_title;
+    const hazardType = body.hazardType || body.hazard_type;
     const latitude = body.latitude;
     const longitude = body.longitude;
 
-    // Clean search context name
-    let searchContext = query.trim();
-    const parts = searchContext.split(',').map((p: string) => p.trim()).filter(Boolean);
-    if (parts.length > 1) {
-      searchContext = parts[0].length > 2 ? parts[0] : `${parts[0]} ${parts[1]}`;
+    // Prioritize parent city or hazard title for search context
+    let searchContext = '';
+    if (hazardTitle) {
+      searchContext = hazardTitle;
+    } else if (parentCity && !['Active Sector', 'Designated Sector', 'Local Sector'].includes(parentCity)) {
+      searchContext = parentCity;
+    } else {
+      const parts = query.split(',').map((p: string) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        // e.g. "Indiranagar, Bengaluru, Karnataka" -> use "Bengaluru"
+        searchContext = parts[1];
+      } else if (parts.length === 1) {
+        searchContext = parts[0];
+      }
     }
-    if (['Active Sector', 'Local Sector', 'Designated Sector'].includes(searchContext)) {
+    if (!searchContext || ['Active Sector', 'Local Sector', 'Designated Sector'].includes(searchContext)) {
       searchContext = 'India';
     }
 
-    const cacheKey = searchContext.toLowerCase().trim();
+    const cacheKey = `${searchContext.toLowerCase().trim()}_${latitude ? Number(latitude).toFixed(2) : '0'}_${longitude ? Number(longitude).toFixed(2) : '0'}`;
     const now = Date.now();
     const cached = _INTEL_CACHE.get(cacheKey);
     if (cached && now - cached.timestamp < 600000) {
       return NextResponse.json(cached.data);
     }
 
-    // 1. Primary Tavily Search
+    // 1. Primary Tavily Search (100% Pure Tavily)
     const seenUrls = new Set<string>();
     const allArticles: any[] = [];
 
@@ -366,10 +334,13 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2. If Tavily returned fewer than 3 results, supplement with Google News RSS
-    if (allArticles.length < 3) {
-      const googleArticles = await fetchGoogleArticles(searchContext);
-      for (const a of googleArticles) {
+    // 2. If Tavily returned fewer than 4 results, do a second Tavily query with broader terms
+    if (allArticles.length < 4) {
+      const fallbackQuery = hazardTitle 
+        ? `${hazardTitle} situation report` 
+        : `${searchContext} emergency disaster weather news`;
+      const { articles: moreArticles } = await fetchTavilyArticles(searchContext, fallbackQuery);
+      for (const a of moreArticles) {
         if (!seenUrls.has(a.url)) {
           seenUrls.add(a.url);
           allArticles.push(a);

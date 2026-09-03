@@ -203,14 +203,15 @@ export default function DisasterCommandPage() {
 
         try {
           const geo = await api.reverseGeocode(lat, lon);
-          setUserLocation({ lat, lon, locality: geo.locality, parentCity: (geo as any).parent_city || geo.city });
-          setTargetCoords({ lat, lon, zoom: 11 });
+          const parentCity = (geo as any).parent_city || geo.city || geo.district || geo.locality || 'User Locality';
+          setUserLocation({ lat, lon, locality: geo.locality, parentCity });
+          setTargetCoords({ lat, lon, zoom: 11, name: parentCity });
           setInspectedItem(null);
           fetch20kmRiskAssessment(lat, lon);
         } catch (err) {
           console.error("Geocoding error:", err);
           setUserLocation({ lat, lon });
-          setTargetCoords({ lat, lon, zoom: 11 });
+          setTargetCoords({ lat, lon, zoom: 11, name: 'Active Sector' });
           setInspectedItem(null);
           fetch20kmRiskAssessment(lat, lon);
         } finally {
@@ -240,29 +241,31 @@ export default function DisasterCommandPage() {
   };
 
   // 4. Place Search Handler: Flies to Coordinates & Opens Sector Dossier Tab
-  const handleSelectSearchPlace = (place: { lat: number; lon: number; name: string; displayName: string; parentCity?: string }) => {
+  const handleSelectSearchPlace = (place: { lat: number; lon: number; name: string; displayName: string; parentCity?: string; locality?: string }) => {
+    const selectedCity = place.parentCity || place.name;
     fetch20kmRiskAssessment(place.lat, place.lon);
     setTargetCoords({
       lat: place.lat,
       lon: place.lon,
       zoom: 13,
-      name: place.name,
+      name: selectedCity,
     });
     setInspectedItem({
       type: 'PLACE',
-      name: place.name,
+      name: selectedCity,
+      locality: place.locality || place.name,
       lat: place.lat,
       lon: place.lon,
       displayName: place.displayName,
-      parentCity: place.parentCity,
-    });
+      parentCity: selectedCity,
+    } as any);
 
     // Automatically open Sector Dossier tab in sidebar
     setActiveTab('intel');
     setIsSidebarOpen(true);
   };
 
-  // 5. Globe Marker Inspection Click
+  // 5. Globe Marker Inspection Click (Syncs Target Coordinates & Hazard Dossier)
   const handleInspectItem = (item: InspectItem) => {
     setInspectedItem(item);
     setActiveTab('intel');
@@ -279,7 +282,14 @@ export default function DisasterCommandPage() {
       : item.type === 'QUAKE' ? item.data.longitude
       : item.type === 'PLACE' ? item.lon : null;
 
+    const itemName = item.type === 'CITY' ? item.data.name
+      : item.type === 'SHELTER' ? item.data.name
+      : item.type === 'DISASTER' ? (item.data.place || item.data.title)
+      : item.type === 'QUAKE' ? item.data.place
+      : item.type === 'PLACE' ? (item.parentCity || item.name) : 'Sector';
+
     if (itemLat !== null && itemLon !== null) {
+      setTargetCoords({ lat: itemLat, lon: itemLon, zoom: 11, name: itemName });
       fetch20kmRiskAssessment(itemLat, itemLon);
     }
   };
@@ -615,18 +625,27 @@ export default function DisasterCommandPage() {
                 alerts={alerts}
                 disasters={liveDisasters}
                 userLocation={userLocation ? { lat: userLocation.lat, lon: userLocation.lon } : activeViewport ? { lat: activeViewport.lat, lon: activeViewport.lon } : null}
-                onFocusOnMap={(lat, lon, title) => {
-                  setTargetCoords({ lat, lon, zoom: 12, name: title });
-                  setInspectedItem({
-                    type: 'PLACE',
-                    name: title || 'Hazard Coordinate',
-                    displayName: title || 'Hazard Coordinate',
-                    lat,
-                    lon,
-                  });
+                onFocusOnMap={(lat, lon, title, item) => {
+                  const targetName = item?.place || title || 'Hazard Coordinate';
+                  setTargetCoords({ lat, lon, zoom: 12, name: targetName });
+                  if (item) {
+                    setInspectedItem({
+                      type: 'DISASTER',
+                      data: item,
+                    });
+                  } else {
+                    setInspectedItem({
+                      type: 'PLACE',
+                      name: title || 'Hazard Coordinate',
+                      displayName: title || 'Hazard Coordinate',
+                      lat,
+                      lon,
+                    });
+                  }
                   setLocalityRiskData(null);
                   setActiveTab('intel');
                   setIsSidebarOpen(true);
+                  fetch20kmRiskAssessment(lat, lon);
                 }}
                 onFindShelter={() => setActiveTab('shelters')}
               />

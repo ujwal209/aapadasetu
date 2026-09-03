@@ -19,7 +19,7 @@ interface AlertFeedProps {
   alerts?: DisasterAlert[];
   disasters?: LiveDisaster[];
   userLocation?: { lat: number; lon: number } | null;
-  onFocusOnMap: (lat: number, lon: number, title?: string) => void;
+  onFocusOnMap: (lat: number, lon: number, title?: string, item?: any) => void;
   onFindShelter?: (district: string) => void;
 }
 
@@ -296,7 +296,7 @@ export const AlertFeed: React.FC<AlertFeedProps> = ({
                     </a>
                   )}
                   <button
-                    onClick={() => onFocusOnMap(item.latitude, item.longitude, item.title)}
+                    onClick={() => onFocusOnMap(item.latitude, item.longitude, item.title, item)}
                     className="text-neutral-900 dark:text-white font-semibold hover:underline flex items-center space-x-1 flex-shrink-0 cursor-pointer"
                   >
                     <Navigation className="w-3 h-3" />
