@@ -504,8 +504,15 @@ export default function DisasterCommandPage() {
     return false;
   }, [localityRiskData, inspectedItem, targetCoords, userLocation, liveDisasters, liveEarthquakes]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [isSidebarOpen]);
+
   return (
-    <div className="flex w-screen h-screen overflow-hidden bg-white dark:bg-black text-neutral-900 dark:text-neutral-100 select-text font-sans">
+    <div className="flex w-full h-[100dvh] max-w-full overflow-hidden bg-white dark:bg-black text-neutral-900 dark:text-neutral-100 select-text font-sans">
       {/* 1. SAAS SPLIT SIDEBAR: ALL TABS & FUNCTIONALITY EMBEDDED (NO FLOATING MODALS) */}
       {isSidebarOpen && (
         <aside
@@ -975,7 +982,7 @@ export default function DisasterCommandPage() {
       )}
 
       {/* 2. MAP CONTAINER (FLEX-1: RESIZES DYNAMICALLY WHEN SIDEBAR OPENS/CLOSES) */}
-      <main className="relative flex-1 h-full overflow-hidden">
+      <main className="relative flex-1 w-full min-w-0 h-full overflow-hidden">
         {/* Full 3D Earth Map with MapLibre */}
         <GlobeViewer3D
           earthquakes={liveEarthquakes}

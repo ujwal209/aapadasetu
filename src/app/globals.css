@@ -112,3 +112,16 @@ body {
   color: #ffffff !important;
 }
 
+/* Responsive Fullscreen Leaflet Container (Fix mobile cutoff and touch action) */
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  position: absolute !important;
+  inset: 0 !important;
+  touch-action: pan-x pan-y !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+

@@ -71,6 +71,7 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
   const routeLayerGroupRef = useRef<any>(null);
   const userMarkerRef = useRef<any>(null);
   const searchMarkerRef = useRef<any>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   // Basemap & Layer toggles
   const [basemap, setBasemap] = useState<'satellite' | 'street' | 'dark'>('satellite');
@@ -479,6 +480,32 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
       if (selectedCoordinates) {
         map.flyTo([selectedCoordinates.lat, selectedCoordinates.lon], selectedCoordinates.zoom || 11, { duration: 1.2 });
       }
+
+      // Responsive Map Invalidation: Eliminate mobile cutoff and viewport discrepancies
+      const handleResize = () => {
+        if (leafletMapRef.current) {
+          leafletMapRef.current.invalidateSize({ debounceMoveend: true });
+        }
+      };
+
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+      }
+
+      if (typeof ResizeObserver !== 'undefined' && mapContainerRef.current) {
+        resizeObserverRef.current = new ResizeObserver(() => {
+          handleResize();
+        });
+        resizeObserverRef.current.observe(mapContainerRef.current);
+      }
+
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('orientationchange', handleResize);
+
+      // Multiple staggered invalidation passes to catch initial mobile flexbox layout and browser bar settlement
+      setTimeout(handleResize, 100);
+      setTimeout(handleResize, 350);
+      setTimeout(handleResize, 750);
     };
 
     // Load Leaflet CSS and JS via robust CDN loader
@@ -517,6 +544,10 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
 
     return () => {
       isMounted = false;
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+        resizeObserverRef.current = null;
+      }
       if (leafletMapRef.current) {
         leafletMapRef.current.remove();
         leafletMapRef.current = null;
@@ -602,8 +633,8 @@ export const GlobeViewer3D: React.FC<GlobeViewer3DProps> = ({
 
   return (
     <div className="relative w-full h-full bg-[#0B0F19] overflow-hidden select-none">
-      {/* Map DOM Container (No isolated z-0 so Leaflet panes participate in stacking) */}
-      <div ref={mapContainerRef} className="w-full h-full relative" tabIndex={0} />
+      {/* Map DOM Container (Absolute inset-0 guarantees full-viewport coverage) */}
+      <div ref={mapContainerRef} className="w-full h-full absolute inset-0" tabIndex={0} />
 
       {/* Embedded Floating Overlays (SearchCard) */}
       {children}
